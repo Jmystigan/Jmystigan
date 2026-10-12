@@ -129,6 +129,40 @@ CREATE TABLE IF NOT EXISTS park_presence (
   last_seen TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, park_id)
 );
+-- Open world: one region per state. The launcher/game poll /api/world/manifest to learn what is released.
+CREATE TABLE IF NOT EXISTS regions (
+  code TEXT PRIMARY KEY, name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planned',  -- planned | scanning | released
+  release_version TEXT, released_at TEXT, notes TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS news (
+  id INTEGER PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', region TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Riders submit skate spots they find; the developer reviews them and may visit/scan them.
+CREATE TABLE IF NOT EXISTS spots (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', lat REAL NOT NULL, lng REAL NOT NULL,
+  tags TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | planned | converted
+  admin_note TEXT NOT NULL DEFAULT '', park_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS spot_photos (
+  id INTEGER PRIMARY KEY, spot_id INTEGER NOT NULL REFERENCES spots(id) ON DELETE CASCADE,
+  stored_as TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS spot_votes (
+  spot_id INTEGER NOT NULL REFERENCES spots(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY (spot_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS post_reactions (
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY (post_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_spots_status ON spots(status);
 CREATE INDEX IF NOT EXISTS idx_posts_park ON posts(park_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_park ON park_scores(park_id, best_score DESC);
 `);
@@ -137,6 +171,7 @@ for (const col of ['external_id TEXT', 'email TEXT', 'payment_intent TEXT', 'rev
   try { db.exec(`ALTER TABLE licenses ADD COLUMN ${col}`); } catch { /* already exists */ }
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_lic_pi ON licenses(payment_intent)');
+try { db.exec('ALTER TABLE parks ADD COLUMN spot_id INTEGER'); } catch { /* already exists */ }
 // Private profiles: hidden from lists, search, leaderboards and profile pages; counted only in anonymous totals.
 // Always on for under-13s (enforced here and in the settings route); 13+ can choose.
 try { db.exec('ALTER TABLE users ADD COLUMN profile_private INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }

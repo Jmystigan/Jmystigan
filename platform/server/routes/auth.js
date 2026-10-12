@@ -4,6 +4,7 @@ import { db, tx } from '../db.js';
 import { config } from '../config.js';
 import { hashPassword, verifyPassword, signToken, ageOf, canSocial, requireAuth, requireWeb, rateLimit } from '../auth.js';
 import { sendMail, parentConsentEmail } from '../email.js';
+import { deleteUser } from '../users.js';
 
 export const router = Router();
 
@@ -88,7 +89,7 @@ router.post('/parent/:token', rateLimit('parent', 60, 600_000, (r) => r.ip), (re
     db.prepare("UPDATE users SET consent_status = 'approved' WHERE id = ?").run(u.id);
     return res.json({ ok: true, status: 'approved' });
   }
-  if (action === 'delete') { db.prepare('DELETE FROM users WHERE id = ?').run(u.id); return res.json({ ok: true, deleted: true }); }
+  if (action === 'delete') { deleteUser(u.id); return res.json({ ok: true, deleted: true }); }
   res.status(400).json({ error: 'action must be approve or delete' });
 });
 // Child (or parent mistyped nothing) can ask us to re-send the approval email.
@@ -100,6 +101,6 @@ router.post('/auth/resend-consent', requireWeb, rateLimit('resend', 3, 3600_000)
 
 // Parents can delete their child's data (COPPA expectation). Players can delete their own account too.
 router.delete('/me', requireWeb, (req, res) => {
-  db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
+  deleteUser(req.user.id);
   res.json({ ok: true });
 });

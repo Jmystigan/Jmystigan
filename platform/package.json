@@ -12,12 +12,18 @@
     "dev": "node --watch server/index.js",
     "seed": "node scripts/seed.js",
     "make-admin": "node scripts/make-admin.js",
-    "test": "node --test scripts/api.test.js scripts/billing.test.js"
+    "test": "node --test scripts/api.test.js scripts/billing.test.js scripts/world.test.js",
+    "build-map": "node scripts/build-map.js"
   },
   "dependencies": {
+    "d3-geo": "^3.1.1",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "stripe": "^18.5.0"
+  },
+  "devDependencies": {
+    "topojson-client": "^3.1.0",
+    "us-atlas": "^3.0.1"
   }
 }

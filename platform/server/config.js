@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dataDir = process.env.DATA_DIR || path.join(root, 'data');
+const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'));
 fs.mkdirSync(dataDir, { recursive: true });
 
 // Persist a generated secret so tokens survive restarts when JWT_SECRET isn't set.
@@ -19,6 +19,7 @@ export const config = {
   root,
   dataDir,
   buildsDir: path.join(dataDir, 'builds'),
+  uploadsDir: path.join(dataDir, 'uploads'),
   webDir: path.join(root, 'web'),
   port: Number(process.env.PORT || 3000),
   jwtSecret: secret(),

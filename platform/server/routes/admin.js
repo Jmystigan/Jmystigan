@@ -7,6 +7,9 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import { requireAdmin } from '../auth.js';
 import { revokeLicense, reinstateLicense } from '../licenses.js';
+import { releaseRegion, setRegionStatus, bumpRevision, addNews } from '../world.js';
+import { SPOT_SELECT, spotJson } from './spots.js';
+import { tx } from '../db.js';
 
 export const router = Router();
 router.use('/admin', requireAdmin);
@@ -67,12 +70,15 @@ const STATUSES = ['planned', 'scheduled', 'scanned', 'in_game'];
 router.post('/admin/parks', (req, res) => {
   const b = req.body ?? {};
   if (!b.name || !b.city || !b.state) return res.status(400).json({ error: 'name, city and state are required' });
+  b.state = String(b.state).toUpperCase();
+  if (!db.prepare('SELECT 1 FROM regions WHERE code = ?').get(b.state)) return res.status(400).json({ error: 'State must be a 2-letter US state code (e.g. TX)' });
   if (b.status && !STATUSES.includes(b.status)) return res.status(400).json({ error: 'Bad status' });
   const slug = slugify(`${b.name}-${b.city}`);
   try {
     db.prepare('INSERT INTO parks (slug, name, city, state, lat, lng, status, visit_date, description) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(slug, b.name, b.city, b.state, b.lat ?? null, b.lng ?? null, b.status ?? 'planned', b.visitDate || null, b.description ?? '');
   } catch { return res.status(409).json({ error: 'A park with that name/city already exists' }); }
+  bumpRevision();
   res.status(201).json({ slug });
 });
 router.patch('/admin/parks/:slug', (req, res) => {
@@ -83,6 +89,7 @@ router.patch('/admin/parks/:slug', (req, res) => {
   db.prepare('UPDATE parks SET name=?, city=?, state=?, lat=?, lng=?, status=?, visit_date=?, description=? WHERE slug=?').run(
     b.name ?? cur.name, b.city ?? cur.city, b.state ?? cur.state, b.lat ?? cur.lat, b.lng ?? cur.lng,
     b.status ?? cur.status, b.visitDate === undefined ? cur.visit_date : (b.visitDate || null), b.description ?? cur.description, req.params.slug);
+  bumpRevision();
   res.json({ ok: true });
 });
 
@@ -143,4 +150,61 @@ router.post('/admin/users/:id', (req, res) => {
 router.post('/admin/requests/:id/delete', (req, res) => {
   db.prepare('DELETE FROM park_requests WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
+});
+
+// ---- Open world: regions (states)
+router.get('/admin/regions', (_req, res) => {
+  res.json({ regions: db.prepare(`SELECT r.code, r.name, r.status, r.release_version AS releaseVersion, r.released_at AS releasedAt, r.notes,
+    (SELECT COUNT(*) FROM parks p WHERE p.state = r.code) AS parks FROM regions r ORDER BY r.name`).all() });
+});
+router.post('/admin/regions/:code/release', (req, res) => {
+  try { res.json({ ok: true, ...releaseRegion(req.params.code.toUpperCase(), req.body ?? {}) }); }
+  catch (e) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+router.post('/admin/regions/:code', (req, res) => {
+  try { res.json({ ok: true, revision: setRegionStatus(req.params.code.toUpperCase(), req.body?.status, req.body?.notes) }); }
+  catch (e) { res.status(e.status ?? 500).json({ error: e.message }); }
+});
+router.post('/admin/news', (req, res) => {
+  const title = String(req.body?.title ?? '').trim().slice(0, 120);
+  if (!title) return res.status(400).json({ error: 'title is required' });
+  addNews('news', title, String(req.body?.body ?? '').slice(0, 500));
+  res.status(201).json({ ok: true });
+});
+
+// ---- Spot submissions from riders
+router.get('/admin/spots', (req, res) => {
+  const status = ['pending', 'approved', 'rejected', 'planned', 'converted'].includes(req.query.status) ? req.query.status : 'pending';
+  res.json({ spots: db.prepare(`${SPOT_SELECT} WHERE s.status = ? ORDER BY votes DESC, s.id DESC LIMIT 200`).all(0, status)
+    .map((r) => ({ ...spotJson(r, req.user), submittedBy: r.username, adminNote: r.admin_note })) });
+});
+router.post('/admin/spots/:id', (req, res) => {
+  const { status, note } = req.body ?? {};
+  if (!['approved', 'rejected', 'planned', 'pending'].includes(status)) return res.status(400).json({ error: 'status must be approved, rejected, planned or pending' });
+  const r = db.prepare('UPDATE spots SET status = ?, admin_note = COALESCE(?, admin_note) WHERE id = ? AND status != ?').run(status, note ?? null, Number(req.params.id), 'converted');
+  if (!r.changes) return res.status(404).json({ error: 'Not found (or already converted to a park)' });
+  bumpRevision();
+  res.json({ ok: true });
+});
+// Turn a rider-found spot into a stop on the tour: creates a park (planned/scheduled) and credits the finder.
+router.post('/admin/spots/:id/promote', (req, res) => {
+  const spot = db.prepare('SELECT * FROM spots WHERE id = ?').get(Number(req.params.id));
+  if (!spot) return res.status(404).json({ error: 'Not found' });
+  if (spot.status === 'converted') return res.status(409).json({ error: 'Already converted' });
+  const b = req.body ?? {};
+  const state = String(b.state ?? '').toUpperCase(), city = String(b.city ?? '').trim();
+  if (!city || !db.prepare('SELECT 1 FROM regions WHERE code = ?').get(state)) return res.status(400).json({ error: 'city and a 2-letter state are required' });
+  const name = String(b.name || spot.name).trim().slice(0, 80);
+  const slugBase = `${name}-${city}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+  try {
+    const out = tx(() => {
+      const r = db.prepare('INSERT INTO parks (slug, name, city, state, lat, lng, status, visit_date, description, spot_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(slugBase, name, city, state, spot.lat, spot.lng, b.visitDate ? 'scheduled' : 'planned', b.visitDate || null, spot.description, spot.id);
+      db.prepare("UPDATE spots SET status = 'converted', park_id = ? WHERE id = ?").run(r.lastInsertRowid, spot.id);
+      addNews('tour', `New stop on the tour: ${name}`, `${city}, ${state} — found by a rider.`, state);
+      bumpRevision();
+      return slugBase;
+    });
+    res.status(201).json({ slug: out });
+  } catch { res.status(409).json({ error: 'A park with that name/city already exists' }); }
 });

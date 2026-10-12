@@ -3,19 +3,21 @@ import { db, tx } from '../db.js';
 import { config } from '../config.js';
 import { requireWeb, requireSocial, rateLimit, ageOf } from '../auth.js';
 import { PRESETS, checkText } from '../moderation.js';
+import { project } from '../geo.js';
 
 export const router = Router();
 const recent = `datetime('now', '-${config.presenceMinutes} minutes')`;
 
-router.get('/parks', (_req, res) => {
-  const parks = db.prepare(`SELECT p.slug, p.name, p.city, p.state, p.lat, p.lng, p.status, p.visit_date AS visitDate, p.description,
+export function listParks() {
+  return db.prepare(`SELECT p.slug, p.name, p.city, p.state, p.lat, p.lng, p.status, p.visit_date AS visitDate, p.description,
       (SELECT COUNT(*) FROM park_members m JOIN users u ON u.id = m.user_id WHERE m.park_id = p.id AND u.banned = 0 AND u.consent_status != 'pending') AS members,
       (SELECT COALESCE(SUM(pl.best_score), 0) FROM park_members m JOIN players pl ON pl.user_id = m.user_id JOIN users u ON u.id = m.user_id
          WHERE m.park_id = p.id AND u.banned = 0 AND u.consent_status != 'pending') AS crewScore,
       (SELECT COUNT(*) FROM park_presence s WHERE s.park_id = p.id AND s.last_seen >= ${recent}) AS onlineNow
-    FROM parks p ORDER BY CASE p.status WHEN 'in_game' THEN 0 WHEN 'scanned' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END, p.state, p.name`).all();
-  res.json({ parks });
-});
+    FROM parks p ORDER BY CASE p.status WHEN 'in_game' THEN 0 WHEN 'scanned' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END, p.state, p.name`).all()
+    .map((p) => { const xy = p.lat != null ? project(p.lat, p.lng) : null; return { ...p, x: xy?.[0] ?? null, y: xy?.[1] ?? null }; });
+}
+router.get('/parks', (_req, res) => res.json({ parks: listParks() }));
 
 router.get('/parks/presets', (_req, res) => res.json({ presets: PRESETS }));
 
@@ -30,13 +32,17 @@ router.get('/parks/:slug', (req, res) => {
       EXISTS (SELECT 1 FROM park_presence s WHERE s.user_id = u.id AND s.park_id = m.park_id AND s.last_seen >= ${recent}) AS online
     FROM park_members m JOIN users u ON u.id = m.user_id JOIN players pl ON pl.user_id = u.id
     WHERE m.park_id = ? AND ${visible} ORDER BY online DESC, pl.best_score DESC LIMIT 100`).all(p.id);
-  const posts = db.prepare(`SELECT po.id, CASE WHEN u.profile_private = 1 THEN NULL ELSE u.username END AS username, po.body, po.created_at AS createdAt FROM posts po
-    JOIN users u ON u.id = po.user_id WHERE po.park_id = ? AND po.hidden = 0 AND ${active} ORDER BY po.id DESC LIMIT 50`).all(p.id);
+  const posts = db.prepare(`SELECT po.id, CASE WHEN u.profile_private = 1 THEN NULL ELSE u.username END AS username, po.body, po.created_at AS createdAt,
+      (SELECT COUNT(*) FROM post_reactions r WHERE r.post_id = po.id) AS respects,
+      EXISTS (SELECT 1 FROM post_reactions r WHERE r.post_id = po.id AND r.user_id = ?) AS respected FROM posts po
+    JOIN users u ON u.id = po.user_id WHERE po.park_id = ? AND po.hidden = 0 AND ${active} ORDER BY po.id DESC LIMIT 50`).all(req.user?.id ?? 0, p.id)
+    .map((m) => ({ ...m, respected: !!m.respected }));
+  const found = p.spot_id ? db.prepare('SELECT u.username FROM spots s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND u.profile_private = 0 AND u.banned = 0').get(p.spot_id) : null;
   const privateRiders = db.prepare(`SELECT COUNT(*) c FROM park_members m JOIN users u ON u.id = m.user_id WHERE m.park_id = ? AND ${active} AND u.profile_private = 1`).get(p.id).c;
   const isMember = req.user ? !!db.prepare('SELECT 1 FROM park_members WHERE user_id = ? AND park_id = ?').get(req.user.id, p.id) : false;
   const mineRow = req.user ? db.prepare('SELECT pk.slug, pk.name FROM park_members m JOIN parks pk ON pk.id = m.park_id WHERE m.user_id = ?').get(req.user.id) : null;
   res.json({ park: { slug: p.slug, name: p.name, city: p.city, state: p.state, lat: p.lat, lng: p.lng, status: p.status, visitDate: p.visit_date, description: p.description },
-    leaderboard, crew: crew.map((c) => ({ ...c, online: !!c.online })), posts, isMember, privateRiders, representing: mineRow ?? null });
+    leaderboard, crew: crew.map((c) => ({ ...c, online: !!c.online })), posts, isMember, privateRiders, representing: mineRow ?? null, discoveredBy: found?.username ?? null });
 });
 
 router.post('/parks/:slug/join', requireWeb, requireSocial, (req, res) => {
@@ -72,6 +78,18 @@ router.post('/parks/:slug/posts', requireWeb, requireSocial, rateLimit('post', 6
   }
   const r = db.prepare('INSERT INTO posts (park_id, user_id, body) VALUES (?,?,?)').run(p.id, req.user.id, body);
   res.status(201).json({ id: Number(r.lastInsertRowid) });
+});
+
+// "Respect" (a like) on a board post. Reactions are safe for everyone, including under-13s.
+router.post('/posts/:id/respect', requireWeb, requireSocial, rateLimit('respect', 60, 60_000), (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT 1 FROM posts WHERE id = ? AND hidden = 0').get(id)) return res.status(404).json({ error: 'Not found' });
+  db.prepare('INSERT OR IGNORE INTO post_reactions VALUES (?,?)').run(id, req.user.id);
+  res.json({ ok: true });
+});
+router.delete('/posts/:id/respect', requireWeb, (req, res) => {
+  db.prepare('DELETE FROM post_reactions WHERE post_id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  res.json({ ok: true });
 });
 
 router.post('/posts/:id/report', requireWeb, rateLimit('report', 20, 3600_000), (req, res) => {

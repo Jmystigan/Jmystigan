@@ -10,6 +10,9 @@ import { router as parks } from './routes/parks.js';
 import { router as launcher } from './routes/launcher.js';
 import { router as admin } from './routes/admin.js';
 import { router as billing, webhook } from './routes/billing.js';
+import { router as spots } from './routes/spots.js';
+import { router as world } from './routes/world.js';
+import './world.js'; // seeds regions + revision
 import { startJobs } from './jobs.js';
 
 export const app = express();
@@ -25,14 +28,15 @@ app.use((_req, res, next) => {
 });
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), webhook); // needs the raw body for signature check
 app.use(express.json({ limit: '100kb' }));
-app.use('/api', loadUser, auth, game, players, parks, launcher, billing, admin);
+app.use('/api', loadUser, auth, game, players, parks, spots, world, launcher, billing, admin);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use(express.static(config.webDir, { extensions: ['html'] }));
 app.get(/.*/, (_req, res) => res.sendFile(path.join(config.webDir, 'index.html'))); // SPA fallback
 
 app.use((err, _req, res, _next) => {
-  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File too large' });
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File too large (photos max 6 MB)' });
+  if (String(err.code).startsWith('LIMIT_')) return res.status(400).json({ error: 'Too many files or fields' });
   console.error(err);
   res.status(500).json({ error: 'Something went wrong' });
 });

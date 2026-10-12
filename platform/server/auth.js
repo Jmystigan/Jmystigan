@@ -66,3 +66,11 @@ export function rateLimit(name, max, windowMs, keyFn = (req) => req.user?.id ?? 
   };
 }
 setInterval(() => { const n = Date.now(); for (const [k, v] of hits) if (n > v.reset) hits.delete(k); }, 60_000).unref();
+
+// Server-to-server calls from your launcher backend (shared secret in LAUNCHER_API_KEY; never ship it in a client).
+export function requirePartner(req, res, next) {
+  const given = Buffer.from(String(req.headers.authorization ?? '').replace(/^Bearer /, ''));
+  const want = Buffer.from(config.partnerApiKey);
+  if (!config.partnerApiKey || given.length !== want.length || !crypto.timingSafeEqual(given, want)) return res.status(401).json({ error: 'Bad or missing partner key' });
+  next();
+}
