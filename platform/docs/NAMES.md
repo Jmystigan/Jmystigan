@@ -1,6 +1,6 @@
 # Title ideas
 
-> **Current working title: Sk8** (set as the default `GAME_NAME`). Notes on that choice are at the bottom; the rest are alternatives.
+> **Current title: Blacktop Outlaws** (the default `GAME_NAME`). See "About Blacktop Outlaws" at the bottom. Concept art is in `concept-art/`. Earlier candidates (Sk8, Local Skater, etc.) are kept below for reference.
 
 The game name is one setting (`GAME_NAME`), so nothing is locked in. Ideas lean on what makes this game different: **real skateparks, scanned, and you represent yours.**
 
@@ -34,3 +34,10 @@ It's short, fits the culture, and looks great as a logo. Things to know before c
 - **What I'd do:** keep **Sk8** as the brand but add a distinctive hook: **Sk8: Park Rep**, **Sk8 Local**, or **Sk8 Crew**. Then check the USPTO database, Steam/itch/app stores, the domain, and your social handles, and have a lawyer clear it.
 
 To change it any time: set `GAME_NAME` (everything — site, emails, launcher — follows).
+
+## About "Blacktop Outlaws"
+- **Fit:** distinctive, western + street, and easy to build a look around (see `concept-art/blacktop-outlaws.png`). Much more ownable than "Sk8" or "Local Skater".
+- **Quick search found no game with this exact name.** Neighbours to be aware of: *Outlaws* (1997 western shooter, remastered by Atari in late 2025), and an in-development indie driving game called *Blacktop*. Sharing a word with each isn't a conflict by itself, but they're in the same "game" space, so a proper trademark search matters.
+- **Community angle:** the name says "outlaw" but your app is about *crews* and *representing your park*. A tagline can carry that: e.g. "Rep your park" / "Every park has a crew".
+- **Kids angle:** "Outlaws" is a playful western term, not violent, but it's worth checking how it reads for parents and for app-store age ratings (IARC/ESRB) — keep the imagery skate-and-adventure, not weapons.
+- **To do before spending money:** USPTO search (games, apparel), Steam/itch/app stores, domain (e.g. blacktopoutlaws.com), social handles, then a lawyer.

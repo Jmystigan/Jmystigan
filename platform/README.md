@@ -29,7 +29,7 @@ Admin panel: `#/admin` → **builds** (drag & drop, publish/rollback), **parks**
 | Var | Default | |
 |---|---|---|
 | `STUDIO_NAME` | JMystigan Game Studios | Shown everywhere (web, launcher). **Change here when the name changes — no rebuild.** |
-| `GAME_NAME` | Sk8 | Working title (see docs/NAMES.md) |
+| `GAME_NAME` | Blacktop Outlaws | Working title (see docs/NAMES.md) |
 | `PORT`, `PUBLIC_URL`, `DATA_DIR` | 3000, localhost, `./data` | |
 | `JWT_SECRET` | generated & saved in `DATA_DIR` | Set explicitly in production |
 | `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | | Sell the game with Stripe Checkout; webhooks issue codes and handle refunds → [docs/SETUP_STRIPE_EMAIL.md](docs/SETUP_STRIPE_EMAIL.md) |

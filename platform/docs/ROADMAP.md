@@ -14,6 +14,9 @@
 - One represented park per player (switching replaces). In-game check-in is presence only.
 - Build hosting/launcher are optional (`HOST_BUILDS=1`); your own launcher is the default assumption.
 
+## Title
+- Working title is now **Blacktop Outlaws** (`GAME_NAME`). Concept art in `docs/concept-art/`. Stripe product + emails use `GAME_NAME`, so create the Stripe product with this name.
+
 ## Done most recently
 - **Private profiles for under-13s** (always on; 13+ can opt in): hidden from profiles, search, leaderboards, rider lists, follow; posts show as "A rider"; anonymous counts only. Parent email/page and Safety page say so. Title set to **Sk8**.
 
