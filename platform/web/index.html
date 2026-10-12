@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>Skate Platform</title>
+<meta name="description" content="Every park, every rider. Real skate parks scanned into the game, with profiles, crews and a launcher.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/"><span class="logo" aria-hidden="true">🛹</span><span id="brand">Skate</span></a>
+  <button class="burger" id="burger" aria-label="Menu" aria-expanded="false">☰</button>
+  <nav id="nav"></nav>
+</header>
+<main id="app" aria-live="polite"></main>
+<footer class="foot"><span id="foot"></span> · <a href="#/safety">Safety &amp; privacy</a></footer>
+<div id="toast" role="status"></div>
+<script src="/app.js" type="module"></script>
+</body>
+</html>

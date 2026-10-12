@@ -1,0 +1,20 @@
+{
+  "name": "skate-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Companion platform for the skateboarding game: accounts, player profiles, park social, launcher distribution, admin tools.",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node scripts/seed.js",
+    "make-admin": "node scripts/make-admin.js",
+    "test": "node --test scripts/api.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2"
+  }
+}

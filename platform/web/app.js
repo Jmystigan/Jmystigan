@@ -1,0 +1,376 @@
+// Single-page app, no build step. All dynamic text goes through esc() — never interpolate raw.
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const app = $('#app');
+const state = { cfg: { studioName: 'Studio', gameName: 'Game' }, token: null, user: null };
+try { state.token = localStorage.getItem('token'); } catch {}
+
+async function api(method, url, body) {
+  const r = await fetch('/api' + url, {
+    method, headers: { ...(body && { 'content-type': 'application/json' }), ...(state.token && { authorization: `Bearer ${state.token}` }) },
+    body: body && JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(data.error || 'Request failed'), { status: r.status });
+  return data;
+}
+const get = (u) => api('GET', u), post = (u, b) => api('POST', u, b ?? {}), del = (u) => api('DELETE', u);
+
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2800); }
+function setSession(token) { state.token = token; try { token ? localStorage.setItem('token', token) : localStorage.removeItem('token'); } catch {} }
+const fmt = (n) => Number(n).toLocaleString();
+const bytes = (n) => n > 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n > 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.ceil(n / 1e3) + ' KB';
+const STATUS = { in_game: 'In the game', scanned: 'Scanned', scheduled: 'Visit scheduled', planned: 'Planned' };
+const pill = (s) => `<span class="pill ${esc(s)}">${esc(STATUS[s] ?? s)}</span>`;
+const when = (d) => d ? new Date(d.length === 10 ? d + 'T12:00:00' : d.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+async function refreshUser() {
+  state.user = null;
+  if (state.token) { try { state.user = (await get('/me')).user; } catch { setSession(null); } }
+  renderNav();
+}
+function renderNav() {
+  const u = state.user, h = location.hash || '#/';
+  const l = (href, text) => `<a href="${href}" class="${h === href || (href !== '#/' && h.startsWith(href)) ? 'on' : ''}">${text}</a>`;
+  $('#nav').innerHTML = [l('#/parks', 'Parks'), l('#/tour', 'Tour'), l('#/play', 'Play'),
+    u ? l('#/me', esc(u.username)) : l('#/login', 'Log in'),
+    u?.role === 'admin' ? l('#/admin', 'Admin') : '',
+    u ? '<a href="#/logout">Log out</a>' : '<a class="btn sm" href="#/register">Sign up</a>'].join('');
+}
+$('#burger').onclick = () => { const n = $('#nav'); const o = n.classList.toggle('open'); $('#burger').setAttribute('aria-expanded', o); };
+
+// ---------- pages ----------
+const pages = {};
+
+pages.home = async () => {
+  const { parks } = await get('/parks');
+  const live = parks.filter((p) => p.status === 'in_game').length;
+  return `
+  <section class="hero">
+    <h1>Every park. Every rider.<br>One game.</h1>
+    <p>${esc(state.cfg.studioName)} is scanning real skate parks across the country and dropping them into <b>${esc(state.cfg.gameName)}</b>.
+       Skate your local park, meet the crew that rides it, and watch your level, tricks and bests follow you everywhere.</p>
+    <div class="row"><a class="btn" href="#/play">Get the launcher</a><a class="btn ghost" href="#/parks">Browse parks</a><a class="btn ghost" href="#/tour">Request my park</a></div>
+  </section>
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><h3>We visit the park</h3>We scan real skate parks on location — ledges, rails, bowls and all — and rebuild them for the game.</li>
+    <li><h3>You skate it</h3>Install the game through our launcher. New parks arrive as updates, no reinstalling.</li>
+    <li><h3>Meet the crew</h3>Join the park's crew, see who's online, trade quick messages and chase the park leaderboard.</li>
+    <li><h3>Take it with you</h3>Your profile — level, tricks, personal bests — lives online, on your phone or in a browser.</li>
+  </ol>
+  <h2 style="margin-top:28px">On the tour</h2>
+  <p class="mute">${live} park${live === 1 ? '' : 's'} in the game so far, ${parks.length} on the map.</p>
+  <div class="grid">${parks.slice(0, 6).map(parkCard).join('') || '<p class="mute">The first parks are coming soon.</p>'}</div>`;
+};
+
+function parkCard(p) {
+  return `<a class="card" href="#/parks/${esc(p.slug)}" style="display:block;color:inherit;text-decoration:none">
+    <div class="row"><h3 class="grow">${esc(p.name)}</h3>${pill(p.status)}</div>
+    <div class="mute small">${esc(p.city)}, ${esc(p.state)}${p.visitDate && p.status === 'scheduled' ? ' · visit ' + esc(when(p.visitDate)) : ''}</div>
+    <div class="small" style="margin-top:8px"><span class="dot ${p.onlineNow ? '' : 'off'}"></span>${p.onlineNow} online · ${p.members} in the crew</div></a>`;
+}
+
+pages.parks = async () => {
+  const { parks } = await get('/parks');
+  state.parks = parks;
+  return `<h1>Parks</h1><label style="max-width:320px;margin-bottom:16px">Filter<input id="q" placeholder="Search name, city or state"></label>
+    <div class="grid" id="plist">${parks.map(parkCard).join('') || '<p class="mute">No parks yet.</p>'}</div>
+    `;
+};
+pages.parks.after = () => {
+  const parks = state.parks;
+  $('#q').oninput = (e) => {
+    const q = e.target.value.toLowerCase();
+    $('#plist').innerHTML = parks.filter((p) => `${p.name} ${p.city} ${p.state}`.toLowerCase().includes(q)).map(parkCard).join('') || '<p class="mute">No matches.</p>';
+  };
+};
+
+pages.park = async ([slug]) => {
+  const d = await get(`/parks/${encodeURIComponent(slug)}`);
+  const p = d.park, u = state.user;
+  const kid = u && u.age < 13;
+  const presets = kid ? (await get('/parks/presets')).presets : [];
+  let compose = '';
+  if (!u) compose = '<p class="mute"><a href="#/login">Log in</a> to join the crew.</p>';
+  else if (!u.social) compose = '<p class="mute">Social features unlock once a parent/guardian approves your account.</p>';
+  else if (!d.isMember) compose = '<button class="btn" id="join">Join this crew</button>';
+  else compose = (kid
+    ? `<div class="chips">${presets.map((t, i) => `<button class="chip" data-preset="${i}">${esc(t)}</button>`).join('')}</div>`
+    : `<form id="postform" style="max-width:none"><div class="row"><input class="grow" name="body" maxlength="200" placeholder="Say something to the crew…" required><button class="btn">Post</button></div></form>`)
+    + '<p class="small"><a href="#" id="leave" class="mute">Leave crew</a></p>';
+  return `<p><a href="#/parks">← All parks</a></p>
+    <div class="row"><h1 class="grow">${esc(p.name)}</h1>${pill(p.status)}</div>
+    <p class="mute">${esc(p.city)}, ${esc(p.state)}${p.visitDate ? ' · developer visit ' + esc(when(p.visitDate)) : ''}</p>
+    ${p.description ? `<p>${esc(p.description)}</p>` : ''}
+    ${p.lat != null ? `<p class="small"><a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${+p.lat}&mlon=${+p.lng}#map=17/${+p.lat}/${+p.lng}">View on map ↗</a></p>` : ''}
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+      <section class="card"><h3>Park leaderboard</h3>${d.leaderboard.length ? `<div class="tablewrap"><table><tr><th>#</th><th>Rider</th><th>Best score</th><th>Best combo</th></tr>
+        ${d.leaderboard.map((r, i) => `<tr><td>${i + 1}</td><td><a href="#/u/${esc(r.username)}">${esc(r.username)}</a></td><td>${fmt(r.bestScore)}</td><td>${fmt(r.bestCombo)}</td></tr>`).join('')}</table></div>` : '<p class="mute">No scores yet — be the first.</p>'}</section>
+      <section class="card"><h3>The crew <span class="mute small">(${d.crew.length})</span></h3>${d.crew.length ? d.crew.map((c) =>
+        `<div><span class="dot ${c.online ? '' : 'off'}"></span><a href="#/u/${esc(c.username)}">${esc(c.username)}</a> <span class="mute small">Lv ${c.level}${c.online ? ' · here now' : ''}</span></div>`).join('') : '<p class="mute">Nobody yet.</p>'}</section>
+    </div>
+    <section class="card" style="margin-top:14px"><h3>Park board</h3>${compose}
+      <div id="posts">${d.posts.map((m) => `<div class="post"><a href="#/u/${esc(m.username)}"><b>${esc(m.username)}</b></a> <span class="mute small">${esc(when(m.createdAt))}</span><br>${esc(m.body)}
+        ${u && u.social ? ` <a href="#" class="small mute" data-report="${m.id}">report</a>` : ''}</div>`).join('') || '<p class="mute">Quiet so far.</p>'}</div></section>`;
+};
+pages.park.after = ([slug]) => {
+  const p = `/parks/${encodeURIComponent(slug)}`;
+  const run = (fn) => async (e) => { e.preventDefault(); try { await fn(e); route(); } catch (x) { toast(x.message); } };
+  $('#join')?.addEventListener('click', run(() => post(`${p}/join`)));
+  $('#leave')?.addEventListener('click', run(() => del(`${p}/join`)));
+  $('#postform')?.addEventListener('submit', run((e) => post(`${p}/posts`, { body: new FormData(e.target).get('body') })));
+  document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', run(() => post(`${p}/posts`, { preset: +b.dataset.preset }))));
+  document.querySelectorAll('[data-report]').forEach((a) => a.addEventListener('click', async (e) => { e.preventDefault(); try { await post(`/posts/${a.dataset.report}/report`); toast('Thanks — reported'); a.remove(); } catch (x) { toast(x.message); } }));
+};
+
+pages.tour = async () => {
+  const [{ parks }, { requests }] = await Promise.all([get('/parks'), get('/requests')]);
+  const up = parks.filter((p) => p.status === 'scheduled').sort((a, b) => (a.visitDate || '').localeCompare(b.visitDate || ''));
+  const u = state.user;
+  return `<h1>The tour</h1><p class="mute">We're driving around visiting parks. Here's where we're headed — and where you want us next.</p>
+    <h2>Scheduled visits</h2><div class="grid">${up.map(parkCard).join('') || '<p class="mute">Nothing scheduled yet.</p>'}</div>
+    <h2 style="margin-top:28px">Park requests</h2>
+    ${u?.social ? `<details class="card" style="margin-bottom:14px"><summary><b>Request a park</b></summary><form id="reqform" style="margin-top:12px">
+      <label>Park name<input name="name" required maxlength="80"></label><label>City<input name="city" required maxlength="60"></label>
+      <label>State<input name="state" required maxlength="30"></label><label>Why this park? (optional)<input name="note" maxlength="200"></label>
+      <div class="err" id="reqerr"></div><button class="btn">Send request</button></form></details>` : '<p class="mute small">Log in to request or vote.</p>'}
+    <div class="card">${requests.map((r) => `<div class="post row"><div class="grow"><b>${esc(r.name)}</b> <span class="mute small">${esc(r.city)}, ${esc(r.state)}</span>${r.note ? `<div class="small">${esc(r.note)}</div>` : ''}</div>
+      <button class="btn sm ${r.voted ? '' : 'ghost'}" data-vote="${r.id}" data-voted="${r.voted ? 1 : 0}" ${u?.social ? '' : 'disabled'}>▲ ${r.votes}</button>
+      ${u?.role === 'admin' ? `<button class="btn sm danger" data-rdel="${r.id}">✕</button>` : ''}</div>`).join('') || '<p class="mute">No requests yet.</p>'}</div>`;
+};
+pages.tour.after = () => {
+  $('#reqform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await post('/requests', Object.fromEntries(new FormData(e.target))); toast('Request sent!'); route(); } catch (x) { $('#reqerr').textContent = x.message; }
+  });
+  document.querySelectorAll('[data-vote]').forEach((b) => b.addEventListener('click', async () => {
+    try { await (b.dataset.voted === '1' ? del : post)(`/requests/${b.dataset.vote}/vote`); route(); } catch (x) { toast(x.message); }
+  }));
+  document.querySelectorAll('[data-rdel]').forEach((b) => b.addEventListener('click', async () => { await post(`/admin/requests/${b.dataset.rdel}/delete`); route(); }));
+};
+
+function profileHtml(p, mine) {
+  const next = p.level * 1000, pct = Math.min(100, Math.round(((p.xp % next) / next) * 100));
+  return `<div class="row"><h1 class="grow">${esc(p.username)}</h1>${p.homePark ? `<a class="pill" href="#/parks/${esc(p.homePark.slug)}">🏠 ${esc(p.homePark.name)}</a>` : ''}</div>
+    <div class="row mute small"><span>Joined ${esc(when(p.joined))}</span><span>${p.followers} follower${p.followers === 1 ? '' : 's'}</span></div>
+    <div class="stats"><div class="stat"><b>${p.level}</b><span>Level</span></div><div class="stat"><b>${fmt(p.bestScore)}</b><span>Best score</span></div>
+      <div class="stat"><b>${fmt(p.bestCombo)}</b><span>Best combo</span></div><div class="stat"><b>${p.tricks.length}</b><span>Tricks known</span></div><div class="stat"><b>${p.playHours}h</b><span>Time skated</span></div></div>
+    <div class="level" title="XP progress"><i style="width:${pct}%"></i></div>
+    ${!mine && state.user?.social ? `<p><button class="btn sm ${p.following ? 'ghost' : ''}" id="follow" data-on="${p.following ? 1 : 0}">${p.following ? 'Following' : 'Follow'}</button></p>` : ''}
+    <div class="grid" style="margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+      <section class="card"><h3>Tricks</h3>${p.tricks.length ? `<div class="tablewrap"><table><tr><th>Trick</th><th>Landed</th><th>Best</th></tr>${p.tricks.map((t) => `<tr><td>${esc(t.name)}</td><td>${fmt(t.landed)}×</td><td>${fmt(t.bestScore)}</td></tr>`).join('')}</table></div>` : '<p class="mute">No tricks recorded yet.</p>'}</section>
+      <section class="card"><h3>Park bests</h3>${p.parks.length ? p.parks.map((k) => `<div class="post"><a href="#/parks/${esc(k.slug)}">${esc(k.name)}</a><br><span class="mute small">Score ${fmt(k.bestScore)} · Combo ${fmt(k.bestCombo)}</span></div>`).join('') : '<p class="mute">Skate a park to set a best.</p>'}</section>
+    </div>`;
+}
+pages.me = async () => {
+  if (!state.user) return redirect('#/login');
+  const p = await get('/me/profile'), u = state.user;
+  return `${u.consentStatus === 'pending' ? '<div class="notice">We emailed your parent/guardian to approve your account. Social features (crews, messages, requests) unlock after they approve.</div>' : ''}
+    ${profileHtml(p, true)}
+    <section class="card" style="margin-top:14px"><h3>Account</h3>
+      <div class="row"><a class="btn ghost sm" href="#/play">Redeem a key / get the game</a><button class="btn danger sm" id="delacct">Delete my account &amp; data</button></div></section>`;
+};
+pages.me.after = () => $('#delacct')?.addEventListener('click', async () => {
+  if (!confirm('Delete your account and all your data? This cannot be undone.')) return;
+  await del('/me'); setSession(null); await refreshUser(); location.hash = '#/';
+});
+pages.u = async ([name]) => profileHtml(await get(`/players/${encodeURIComponent(name)}`), false);
+pages.u.after = ([name]) => $('#follow')?.addEventListener('click', async (e) => {
+  try { await (e.target.dataset.on === '1' ? del : post)(`/players/${encodeURIComponent(name)}/follow`); route(); } catch (x) { toast(x.message); }
+});
+
+pages.login = () => `<h1>Log in</h1><form id="f"><label>Username<input name="username" autocomplete="username" required></label>
+  <label>Password<input type="password" name="password" autocomplete="current-password" required></label><div class="err" id="err"></div><button class="btn">Log in</button></form>
+  <p class="mute">New here? <a href="#/register">Create an account</a></p>`;
+pages.login.after = () => $('#f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try { const r = await post('/auth/login', Object.fromEntries(new FormData(e.target))); setSession(r.token); await refreshUser(); location.hash = '#/me'; }
+  catch (x) { $('#err').textContent = x.message; }
+});
+
+pages.register = () => `<h1>Create your account</h1>
+  <p class="mute">Pick a nickname — please don't use your real name. We only ask for birth year so we can keep younger players safe.</p>
+  <form id="f"><label>Username<input name="username" autocomplete="username" pattern="[A-Za-z0-9_]{3,20}" required></label>
+  <label>Password (8+ characters)<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+  <label>Birth year<input name="birthYear" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
+  <label id="pe" hidden>Parent/guardian email<input type="email" name="parentEmail"></label>
+  <div class="err" id="err"></div><button class="btn">Sign up</button></form>
+  <p class="mute small">Players under 13 need a parent or guardian to approve. See <a href="#/safety">Safety &amp; privacy</a>.</p>`;
+pages.register.after = () => {
+  const f = $('#f');
+  f.birthYear.addEventListener('input', () => {
+    const y = +f.birthYear.value, kid = y > 1900 && new Date().getFullYear() - y < 13;
+    $('#pe').hidden = !kid; f.parentEmail.required = kid;
+  });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { const r = await post('/auth/register', Object.fromEntries(new FormData(f))); setSession(r.token); await refreshUser(); location.hash = '#/me'; }
+    catch (x) { $('#err').textContent = x.message; }
+  });
+};
+
+pages.consent = async ([token]) => {
+  let child;
+  try { child = (await get(`/consent/${encodeURIComponent(token)}`)).child; } catch (x) { return `<h1>Parent approval</h1><p>${esc(x.message)}</p>`; }
+  return `<h1>Parent / guardian approval</h1><p><b>${esc(child)}</b> signed up for ${esc(state.cfg.gameName)}. Approving lets them use crews, quick messages and park requests.
+    Players under 13 can only send pre-written phrases, never free text, and we collect no real name, address or phone number.</p>
+    <p class="small mute">You can delete your child's account and data any time from their profile page.</p><button class="btn" id="ok">I'm their parent/guardian — approve</button>`;
+};
+pages.consent.after = ([token]) => $('#ok')?.addEventListener('click', async () => { await post(`/consent/${encodeURIComponent(token)}`); app.innerHTML = '<h1>Approved ✅</h1><p>Thank you. Your child can now use social features.</p>'; });
+
+pages.play = async () => {
+  const ua = navigator.userAgent, plat = /Android/.test(ua) ? 'android' : /iPhone|iPad/.test(ua) ? 'ios' : /Mac/.test(ua) ? 'mac' : /Linux/.test(ua) ? 'linux' : 'win64';
+  const platforms = ['win64', 'mac', 'linux', 'android', 'ios'];
+  const ms = await Promise.all(platforms.map((p) => get(`/launcher/manifest?kind=launcher&platform=${p}`).then((r) => [p, r.build])));
+  const names = { win64: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', ios: 'iOS' };
+  const lib = state.user ? await get('/library').catch(() => ({})) : {};
+  return `<h1>Play</h1><p class="mute">The ${esc(state.cfg.studioName)} launcher installs and updates ${esc(state.cfg.gameName)} for you — including every new park we scan.</p>
+    <div class="grid">${ms.map(([p, b]) => `<div class="card"><h3>${names[p]}${p === plat ? ' <span class="pill">your device</span>' : ''}</h3>
+      ${b ? `<p class="mute small">v${esc(b.version)} · ${bytes(b.size)}</p><a class="btn" href="${esc(b.downloadUrl)}">Download launcher</a>` : '<p class="mute small">Coming soon</p>'}</div>`).join('')}</div>
+    <h2 style="margin-top:28px">Own the game?</h2>
+    ${!state.user ? '<p><a href="#/login">Log in</a> to redeem your key and link the game to your profile.</p>'
+      : lib.owned ? '<p>✅ This account owns the game. Open the launcher and log in with the same username.</p>'
+      : `<form id="redeem"><label>Game key<input name="key" placeholder="XXXXXX-XXXXXX-XXXXXX" required></label><div class="err" id="err"></div><button class="btn">Redeem</button></form>`}`;
+};
+pages.play.after = () => $('#redeem')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try { await post('/licenses/redeem', { key: new FormData(e.target).get('key') }); toast('Unlocked!'); route(); } catch (x) { $('#err').textContent = x.message; }
+});
+
+pages.safety = () => `<h1>Safety &amp; privacy</h1>
+  <div class="card"><ul>
+  <li><b>Nicknames only.</b> No real names, no addresses, no phone numbers — and the park board blocks messages that look like contact details.</li>
+  <li><b>Under 13?</b> A parent or guardian approves the account. Younger players send pre-written phrases only, never free text.</li>
+  <li><b>Reporting.</b> Every board message has a report link. Reported messages are hidden quickly and reviewed by a human.</li>
+  <li><b>Your data.</b> We store your username, birth year, game stats and (for under-13s) a parent email. You or a parent can delete the account and all data any time from the profile page.</li>
+  <li><b>No ads, no selling data.</b></li></ul>
+  <p class="small mute">This page is a plain-language summary; replace it with your final privacy policy and terms before launch.</p></div>`;
+
+// ---------- admin ----------
+pages.admin = async () => {
+  if (state.user?.role !== 'admin') return '<h1>Admins only</h1>';
+  const tab = sessionStorage.getItem('atab') || 'builds';
+  const tabs = ['builds', 'parks', 'licenses', 'moderation', 'users'];
+  return `<h1>Admin</h1><div class="tabs">${tabs.map((t) => `<button data-tab="${t}" class="${t === tab ? 'on' : ''}">${t}</button>`).join('')}</div><div id="tabbody">Loading…</div>`;
+};
+pages.admin.after = () => {
+  const tab = sessionStorage.getItem('atab') || 'builds';
+  document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { sessionStorage.setItem('atab', b.dataset.tab); route(); }));
+  adminTabs[tab]($('#tabbody')).catch((e) => { $('#tabbody').textContent = e.message; });
+};
+const adminTabs = {
+  async builds(el) {
+    const { builds } = await get('/admin/builds');
+    el.innerHTML = `<div class="card"><h3>Upload a build</h3>
+      <p class="mute small">Drag a packaged game or launcher build (zip/installer) onto the box. It uploads as a draft — publish it when you're ready and every launcher updates to it.</p>
+      <div class="row" style="margin-bottom:12px">
+        <label>Type<select id="b-kind"><option value="game">Game</option><option value="launcher">Launcher</option></select></label>
+        <label>Platform<select id="b-plat"><option>win64</option><option>mac</option><option>linux</option><option>android</option><option>ios</option></select></label>
+        <label>Channel<select id="b-chan"><option>stable</option><option>beta</option></select></label>
+        <label>Version<input id="b-ver" placeholder="1.2.0" style="width:120px"></label></div>
+      <label style="margin-bottom:12px">Release notes<textarea id="b-notes" rows="2"></textarea></label>
+      <div class="drop" id="drop" tabindex="0" role="button">⬆ Drop file here or click to choose<input type="file" id="file" hidden></div>
+      <div class="bar" hidden id="bar"><i></i></div><div class="err" id="uerr"></div></div>
+      <h3 style="margin-top:20px">Builds</h3><div class="card tablewrap"><table><tr><th>Type</th><th>Ver</th><th>Platform</th><th>Chan</th><th>Size</th><th>Status</th><th></th></tr>
+      ${builds.map((b) => `<tr><td>${esc(b.kind)}</td><td>${esc(b.version)}</td><td>${esc(b.platform)}</td><td>${esc(b.channel)}</td><td>${bytes(b.size)}</td>
+        <td>${b.published ? '<span class="pill in_game">live</span>' : '<span class="pill">draft</span>'}</td>
+        <td class="row"><button class="btn sm ${b.published ? 'ghost' : ''}" data-pub="${b.id}" data-on="${b.published ? 0 : 1}">${b.published ? 'Unpublish' : 'Publish'}</button><button class="btn sm danger" data-bdel="${b.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="mute">No builds yet.</td></tr>'}</table></div>`;
+    const drop = $('#drop', el), file = $('#file', el);
+    const send = (f) => {
+      const ver = $('#b-ver', el).value.trim();
+      if (!ver) { $('#uerr', el).textContent = 'Enter a version first.'; return; }
+      const fd = new FormData();
+      fd.append('kind', $('#b-kind', el).value); fd.append('platform', $('#b-plat', el).value); fd.append('channel', $('#b-chan', el).value);
+      fd.append('version', ver); fd.append('notes', $('#b-notes', el).value); fd.append('file', f); // file last so fields are parsed first
+      const x = new XMLHttpRequest(); x.open('POST', '/api/admin/builds'); x.setRequestHeader('authorization', `Bearer ${state.token}`);
+      const bar = $('#bar', el); bar.hidden = false;
+      x.upload.onprogress = (e) => { if (e.lengthComputable) $('i', bar).style.width = (e.loaded / e.total * 100) + '%'; };
+      x.onload = () => { if (x.status === 201) { toast('Uploaded as draft'); route(); } else $('#uerr', el).textContent = (JSON.parse(x.responseText || '{}').error) || 'Upload failed'; };
+      x.onerror = () => { $('#uerr', el).textContent = 'Network error during upload'; };
+      x.send(fd);
+    };
+    drop.onclick = () => file.click();
+    drop.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') file.click(); };
+    file.onchange = () => file.files[0] && send(file.files[0]);
+    ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', (e) => e.dataTransfer.files[0] && send(e.dataTransfer.files[0]));
+    el.querySelectorAll('[data-pub]').forEach((b) => b.onclick = async () => { await post(`/admin/builds/${b.dataset.pub}/publish`, { published: b.dataset.on === '1' }); route(); });
+    el.querySelectorAll('[data-bdel]').forEach((b) => b.onclick = async () => { if (confirm('Delete this build file?')) { await del(`/admin/builds/${b.dataset.bdel}`); route(); } });
+  },
+  async parks(el) {
+    const { parks } = await get('/parks');
+    el.innerHTML = `<div class="card"><h3>Add a park</h3><form id="pf" style="max-width:none"><div class="grid">
+      <label>Name<input name="name" required></label><label>City<input name="city" required></label><label>State<input name="state" required></label>
+      <label>Latitude<input name="lat" type="number" step="any"></label><label>Longitude<input name="lng" type="number" step="any"></label>
+      <label>Visit date<input name="visitDate" type="date"></label>
+      <label>Status<select name="status"><option value="planned">planned</option><option value="scheduled">scheduled</option><option value="scanned">scanned</option><option value="in_game">in_game</option></select></label></div>
+      <label>Description<textarea name="description" rows="2"></textarea></label><div class="err" id="err"></div><button class="btn">Add park</button></form></div>
+      <h3 style="margin-top:20px">All parks</h3><div class="card tablewrap"><table><tr><th>Park</th><th>Status</th><th>Visit</th></tr>${parks.map((p) => `<tr><td><a href="#/parks/${esc(p.slug)}">${esc(p.name)}</a><div class="mute small">${esc(p.city)}, ${esc(p.state)}</div></td>
+      <td><select data-st="${esc(p.slug)}">${['planned', 'scheduled', 'scanned', 'in_game'].map((s) => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+      <td><input type="date" data-dt="${esc(p.slug)}" value="${esc(p.visitDate ?? '')}"></td></tr>`).join('')}</table></div>`;
+    $('#pf', el).onsubmit = async (e) => {
+      e.preventDefault();
+      const b = Object.fromEntries(new FormData(e.target));
+      for (const k of ['lat', 'lng']) b[k] = b[k] === '' ? null : Number(b[k]);
+      try { await post('/admin/parks', b); toast('Park added'); route(); } catch (x) { $('#err', el).textContent = x.message; }
+    };
+    el.querySelectorAll('[data-st]').forEach((s) => s.onchange = async () => { await api('PATCH', `/admin/parks/${s.dataset.st}`, { status: s.value }); toast('Saved'); });
+    el.querySelectorAll('[data-dt]').forEach((s) => s.onchange = async () => { await api('PATCH', `/admin/parks/${s.dataset.dt}`, { visitDate: s.value }); toast('Saved'); });
+  },
+  async licenses(el) {
+    const { licenses } = await get('/admin/licenses');
+    el.innerHTML = `<div class="card"><h3>Generate keys</h3><form id="lf" class="row" style="max-width:none"><label>How many<input name="count" type="number" min="1" max="500" value="1" style="width:100px"></label>
+      <label>Note<input name="note" placeholder="e.g. Kickstarter backers"></label><button class="btn" style="align-self:end">Generate</button></form><pre id="keys" class="mono"></pre></div>
+      <h3 style="margin-top:20px">Keys</h3><div class="card tablewrap"><table><tr><th>Key</th><th>Note</th><th>Redeemed by</th></tr>${licenses.map((l) => `<tr><td class="mono">${esc(l.key)}</td><td>${esc(l.note)}</td><td>${esc(l.redeemedBy ?? '—')}</td></tr>`).join('')}</table></div>`;
+    $('#lf', el).onsubmit = async (e) => { e.preventDefault(); const f = new FormData(e.target); const r = await post('/admin/licenses', { count: +f.get('count'), note: f.get('note') }); $('#keys', el).textContent = r.keys.join('\n'); };
+  },
+  async moderation(el) {
+    const { reports } = await get('/admin/reports');
+    el.innerHTML = reports.length ? reports.map((r) => `<div class="card" style="margin-bottom:10px"><b>${esc(r.author)}</b> <span class="mute small">in ${esc(r.park)} · ${r.reports} report(s)${r.hidden ? ' · auto-hidden' : ''}</span>
+      <p>${esc(r.body)}</p><button class="btn sm danger" data-mod="${r.postId}" data-act="remove">Remove</button> <button class="btn sm ghost" data-mod="${r.postId}" data-act="restore">Keep / restore</button></div>`).join('') : '<p class="mute">No open reports 🎉</p>';
+    el.querySelectorAll('[data-mod]').forEach((b) => b.onclick = async () => { await post(`/admin/posts/${b.dataset.mod}/moderate`, { action: b.dataset.act }); route(); });
+  },
+  async users(el) {
+    el.innerHTML = `<label style="max-width:320px">Search username<input id="uq" placeholder="start typing…"></label><div id="ulist" class="card tablewrap" style="margin-top:12px"></div>`;
+    const load = async () => {
+      const { users } = await get(`/admin/users?q=${encodeURIComponent($('#uq', el).value)}`);
+      $('#ulist', el).innerHTML = `<table><tr><th>User</th><th>Role</th><th>Consent</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.username)}${u.banned ? ' <span class="pill">banned</span>' : ''}</td><td>${esc(u.role)}</td><td>${esc(u.consentStatus)}</td>
+        <td class="row"><button class="btn sm ghost" data-ban="${u.id}" data-v="${u.banned ? 0 : 1}">${u.banned ? 'Unban' : 'Ban'}</button>
+        <button class="btn sm ghost" data-role="${u.id}" data-v="${u.role === 'admin' ? 'player' : 'admin'}">Make ${u.role === 'admin' ? 'player' : 'admin'}</button></td></tr>`).join('')}</table>`;
+      el.querySelectorAll('[data-ban]').forEach((b) => b.onclick = async () => { await post(`/admin/users/${b.dataset.ban}`, { banned: b.dataset.v === '1' }); load(); });
+      el.querySelectorAll('[data-role]').forEach((b) => b.onclick = async () => { await post(`/admin/users/${b.dataset.role}`, { role: b.dataset.v }); load(); });
+    };
+    $('#uq', el).oninput = load; load();
+  },
+};
+
+// ---------- router ----------
+function redirect(h) { location.hash = h; return ''; }
+async function route() {
+  renderNav();
+  const parts = (location.hash.slice(2) || '').split('/').map(decodeURIComponent);
+  const [name, ...args] = parts;
+  let key = name || 'home';
+  if (key === 'parks' && args.length) key = 'park';
+  if (key === 'logout') { setSession(null); await refreshUser(); return redirect('#/'); }
+  const page = pages[key] ?? (() => '<h1>Not found</h1><p><a href="#/">Go home</a></p>');
+  app.innerHTML = '<p class="mute">Loading…</p>';
+  try {
+    const html = await page(args);
+    if (typeof html === 'string' && html) { app.innerHTML = html; window.scrollTo(0, 0); page.after?.(args); }
+  } catch (e) { app.innerHTML = `<h1>Oops</h1><p>${esc(e.message)}</p>`; }
+  $('#nav').classList.remove('open');
+}
+window.addEventListener('hashchange', route);
+
+(async () => {
+  try { state.cfg = await get('/config'); } catch {}
+  $('#brand').textContent = state.cfg.studioName;
+  document.title = `${state.cfg.gameName} · ${state.cfg.studioName}`;
+  $('#foot').textContent = `© ${new Date().getFullYear()} ${state.cfg.studioName}`;
+  await refreshUser();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  route();
+})();

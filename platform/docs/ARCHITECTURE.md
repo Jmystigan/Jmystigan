@@ -1,0 +1,32 @@
+# Architecture
+
+## API (all JSON under `/api`)
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /auth/register` `POST /auth/login` `GET /me` `DELETE /me` · `GET/POST /consent/:token` (parent approval) |
+| Game | `PUT /game/stats` `POST /game/checkin` (game token or web token) |
+| Players | `GET /players/:name` `GET /players/search?q=` `POST/DELETE /players/:name/follow` `GET /me/profile` |
+| Parks | `GET /parks` `GET /parks/:slug` `POST/DELETE /parks/:slug/join` `POST /parks/:slug/posts` `POST /posts/:id/report` |
+| Tour | `GET/POST /requests` `POST/DELETE /requests/:id/vote` |
+| Launcher | `GET /config` `GET /launcher/manifest?kind=game\|launcher&channel=&platform=` `GET /launcher/download/:id` (Range-capable) `POST /launcher/game-token` `POST /licenses/redeem` `GET /library` |
+| Admin | `/admin/builds` (upload/list/publish/delete) `/admin/parks` `/admin/licenses` `/admin/reports` `/admin/posts/:id/moderate` `/admin/users` |
+
+### Token scopes
+`web` (30d, full) vs `game` (12h, stats/check-in only — rejected by admin, account-deletion and token-minting routes). A leaked game token from a command line can't hurt an account.
+
+## Kid safety model (built in, not bolted on)
+- Nickname-only accounts; birth **year** only.
+- Under 13: parent email required → account locked from social + invisible to others until parent approves via emailed link. **Email sending is not wired up yet** — the link is logged to the server console (`[consent]`). Wire SES/Postmark/Resend into `routes/auth.js`.
+- Under 13 can only post **preset phrases**. 13+ gets free text filtered for profanity, contact info, links and other platforms (`server/moderation.js` — extend the blocklist).
+- Report links; 3 reports auto-hide pending admin review. Delete-my-account removes all data.
+- **This is engineering, not legal advice.** Have a lawyer review COPPA/GDPR-K/state laws and write the real privacy policy & ToS before collecting data from children.
+
+## Anti-cheat reality
+Stats are client-reported. Server caps and monotonic bests stop casual tampering and stale-upload overwrites, but a determined cheater can forge a leaderboard score. For ranked boards later: submit a replay/input log or have a dedicated server validate runs.
+
+## Going to production
+- **Host:** `Dockerfile` included. One small VPS/Fly/Render/Railway instance + a persistent volume at `/data` is plenty to start. Put it behind HTTPS (required for PWA install and for the launcher).
+- **Database:** SQLite is fine for thousands of players. Move to Postgres when you need multiple server instances (queries are plain SQL; `db.js` is the only coupling).
+- **Big builds:** a multi-GB game through the Node server works but is slow/expensive. Move build storage to Cloudflare R2 / S3 and have `/admin/builds` return a presigned upload URL and `/launcher/download` redirect to a signed download URL. The manifest contract (`version`, `sha256`, `size`, `downloadUrl`) doesn't change, so launchers don't care.
+- **Rate limiting** is in-memory per instance; use Redis if you scale out. **Email:** see above.
+- **Store builds vs own launcher:** if you also ship on Steam/Epic, they handle their own updating; this launcher + license keys is for direct distribution. Keep ownership in `licenses` (sync from store APIs if you want both).

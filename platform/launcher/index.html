@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><title>Launcher</title>
+<style>body{font:16px system-ui;background:#111418;color:#f1f2f4;display:grid;place-items:center;height:100vh;margin:0}main{width:340px;display:grid;gap:10px}
+input,button{font:inherit;padding:10px;border-radius:10px;border:1px solid #2d3641;background:#222932;color:inherit}button{background:#ff7a1a;color:#1a0d00;font-weight:700;border:0;cursor:pointer}progress{width:100%}</style>
+<main><h2 id="name">Launcher</h2>
+<div id="login"><input id="u" placeholder="Username"><input id="p" type="password" placeholder="Password"><button id="go">Log in</button></div>
+<div id="home" hidden><div id="info"></div><progress id="prog" value="0" max="1" hidden></progress><button id="act">Install</button></div><div id="err"></div></main>
+<script src="renderer.js"></script>
