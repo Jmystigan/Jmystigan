@@ -13,7 +13,8 @@
     "seed": "node scripts/seed.js",
     "make-admin": "node scripts/make-admin.js",
     "test": "node --test scripts/api.test.js scripts/billing.test.js scripts/world.test.js",
-    "build-map": "node scripts/build-map.js"
+    "build-map": "node scripts/build-map.js",
+    "test:unreal": "node unreal/tests/run.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

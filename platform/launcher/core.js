@@ -72,10 +72,13 @@ export class Launcher {
     return { updated: true, version: latest.version, file };
   }
 
-  /** Launch the game, handing it a limited 12h token so the player never types a password in-game. */
+  /** Launch the game, handing it a limited 12h token so the player never types a password in-game, plus the installed game
+   *  version: the game compares it with each state's release version to decide "playable" vs "update required". */
   async launch(exePath, extraArgs = []) {
     const { token } = await this.#api('POST', '/api/launcher/game-token', {});
-    const child = spawn(exePath, [`-JMToken=${token}`, `-JMServer=${this.o.server}`, ...extraArgs], { detached: true, stdio: 'ignore' });
+    const version = this.installed()?.version;
+    const args = [`-JMToken=${token}`, `-JMServer=${this.o.server}`, ...(version ? [`-JMGameVersion=${version}`] : []), ...extraArgs];
+    const child = spawn(exePath, args, { detached: true, stdio: 'ignore' });
     child.unref();
     return child.pid;
   }

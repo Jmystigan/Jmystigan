@@ -19,7 +19,7 @@
 - Launcher core `world()`; admin can release a state in one click, or your build pipeline can via the partner endpoint.
 
 ## Not done / untested for this round
-- **The game itself** (Unreal) doesn't read the world manifest yet: the sample subsystem only uploads stats/check-ins. Next step there is a `FetchWorldManifest()` that decides which state levels to stream.
+- **Unreal**: the sample now reads/caches/polls the world manifest and exposes playable/needs-update queries + an `OnWorldUpdated` event. Logic is tested (76 checks vs the real server), but it has **never been compiled inside Unreal** — expect small fixes — and the actual level-streaming/UI that uses it is yours to build.
 - Map is **US-only** (50 states + DC). International would need another basemap.
 - Pins are drawn client-side without clustering; fine for tens of parks, add clustering at hundreds.
 - No push/email notification when a state ships (it appears on the site, map, news and feed).

@@ -8,7 +8,7 @@ The crew app for the skateboarding game. **Customers only** sign up (with a code
 server/    Express API + SQLite (node:sqlite, no native deps); world.js = regions/releases, geo.js = map projection
 web/       Website + player portal + admin panel (no build step; PWA)
 launcher/  OPTIONAL reference launcher (core.js tested, Electron shell untested) — only if you want to host builds here
-unreal/    C++ subsystem that uploads stats and checks in to parks (untested)
+unreal/    C++ subsystem: stats, park check-in, and the open-world manifest (cached, polled, update-aware). Logic tested via a stub harness; see unreal/README.md
 docs/      ARCHITECTURE.md, SCANNING.md, ROADMAP.md
 ```
 
@@ -19,6 +19,7 @@ npm install
 ADMIN_USERNAME=yourname npm start     # http://localhost:3000
 npm run seed                          # optional demo parks
 npm test                              # API integration tests (22)
+npm run test:unreal                   # Unreal sample logic vs the real server (needs g++/clang++)
 npm run build-map                     # regenerate web/us-states.json (needs dev deps)
 node launcher/test.mjs http://localhost:3000 <user> <pass>   # launcher core vs live server
 ```
@@ -60,7 +61,7 @@ GET /api/world/manifest?since=<last revision you saw>
 -> {"revision":12,"changed":false}                                   # nothing new
 -> {"revision":13,"changed":true,"regions":[{"code":"TX","name":"Texas","version":"1.2.0","releasedAt":"…"}],"parks":[{"slug":"rail-yard-austin","name":"Rail Yard","state":"TX","lat":30.27,"lng":-97.74}]}
 ```
-When a state appears that the player hasn't installed (or its `version` is newer than theirs), the launcher prompts the update. `launcher/core.js` has `world(sinceRevision)` for this. Park `slug`s are the same ones the game passes to `CheckInToPark` / `UploadStats`. The website's map also polls this and updates itself live.
+When a state appears that the player hasn't installed (or its `version` is newer than theirs), the launcher prompts the update. `launcher/core.js` has `world(sinceRevision)` for this, and passes `-JMGameVersion` to the game. **The Unreal side is `unreal/JMPlatformSubsystem`**: it polls the same endpoint, caches it for offline play, fires `OnWorldUpdated` ("Texas is now open!") and answers `IsRegionPlayable` / `RegionNeedsUpdate` — setup and Blueprint wiring in `unreal/README.md`. Park `slug`s are the same ones the game passes to `CheckInToPark` / `UploadStats`. The website's map also polls this and updates itself live.
 
 ## The map, social, and "found a spot"
 
