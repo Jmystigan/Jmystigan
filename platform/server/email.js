@@ -32,7 +32,8 @@ export function parentConsentEmail(child, parentLink) {
 Someone signed up for ${config.gameName} (from ${config.studioName}) with this email as the parent/guardian contact. The player's nickname is "${child}". Because they are under 13, their account stays locked until you approve it.
 
 WHAT WE COLLECT: the nickname, birth year, this parent email, and in-game stats (level, tricks, scores). No real name, address, phone number or photo. We show no ads and never sell data.
-WHAT THEY CAN DO IF YOU APPROVE: pick one local skatepark to represent, appear on park leaderboards, and send pre-written phrases (never free text) on that park's board. They can't message anyone privately.
+WHAT THEY CAN DO IF YOU APPROVE: pick one local skatepark to represent and send pre-written phrases (never free text) on that park's board. They can't message anyone privately.
+PRIVACY: under-13 profiles are ALWAYS PRIVATE. Their nickname, level, tricks and scores are never shown to other players — not on profiles, leaderboards, rider lists or search. Their board phrases appear only as "A rider". They are counted only in anonymous park totals.
 
 Review, approve, or delete your child's account and all its data at any time:
 ${parentLink}

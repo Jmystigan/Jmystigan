@@ -22,19 +22,21 @@ router.get('/parks/presets', (_req, res) => res.json({ presets: PRESETS }));
 router.get('/parks/:slug', (req, res) => {
   const p = db.prepare('SELECT * FROM parks WHERE slug = ?').get(req.params.slug);
   if (!p) return res.status(404).json({ error: 'Park not found' });
-  const visible = "u.banned = 0 AND u.consent_status != 'pending'";
+  const active = "u.banned = 0 AND u.consent_status != 'pending'";
+  const visible = `${active} AND u.profile_private = 0`; // named lists show public profiles only
   const leaderboard = db.prepare(`SELECT u.username, ps.best_score AS bestScore, ps.best_combo AS bestCombo FROM park_scores ps
     JOIN users u ON u.id = ps.user_id WHERE ps.park_id = ? AND ${visible} ORDER BY ps.best_score DESC LIMIT 20`).all(p.id);
   const crew = db.prepare(`SELECT u.username, pl.level, pl.best_score AS bestScore,
       EXISTS (SELECT 1 FROM park_presence s WHERE s.user_id = u.id AND s.park_id = m.park_id AND s.last_seen >= ${recent}) AS online
     FROM park_members m JOIN users u ON u.id = m.user_id JOIN players pl ON pl.user_id = u.id
     WHERE m.park_id = ? AND ${visible} ORDER BY online DESC, pl.best_score DESC LIMIT 100`).all(p.id);
-  const posts = db.prepare(`SELECT po.id, u.username, po.body, po.created_at AS createdAt FROM posts po
-    JOIN users u ON u.id = po.user_id WHERE po.park_id = ? AND po.hidden = 0 AND ${visible} ORDER BY po.id DESC LIMIT 50`).all(p.id);
+  const posts = db.prepare(`SELECT po.id, CASE WHEN u.profile_private = 1 THEN NULL ELSE u.username END AS username, po.body, po.created_at AS createdAt FROM posts po
+    JOIN users u ON u.id = po.user_id WHERE po.park_id = ? AND po.hidden = 0 AND ${active} ORDER BY po.id DESC LIMIT 50`).all(p.id);
+  const privateRiders = db.prepare(`SELECT COUNT(*) c FROM park_members m JOIN users u ON u.id = m.user_id WHERE m.park_id = ? AND ${active} AND u.profile_private = 1`).get(p.id).c;
   const isMember = req.user ? !!db.prepare('SELECT 1 FROM park_members WHERE user_id = ? AND park_id = ?').get(req.user.id, p.id) : false;
   const mineRow = req.user ? db.prepare('SELECT pk.slug, pk.name FROM park_members m JOIN parks pk ON pk.id = m.park_id WHERE m.user_id = ?').get(req.user.id) : null;
   res.json({ park: { slug: p.slug, name: p.name, city: p.city, state: p.state, lat: p.lat, lng: p.lng, status: p.status, visitDate: p.visit_date, description: p.description },
-    leaderboard, crew: crew.map((c) => ({ ...c, online: !!c.online })), posts, isMember, representing: mineRow ?? null });
+    leaderboard, crew: crew.map((c) => ({ ...c, online: !!c.online })), posts, isMember, privateRiders, representing: mineRow ?? null });
 });
 
 router.post('/parks/:slug/join', requireWeb, requireSocial, (req, res) => {
@@ -84,7 +86,7 @@ router.post('/posts/:id/report', requireWeb, rateLimit('report', 20, 3600_000), 
 
 // "Bring the developer to my park" requests, with votes — drives the tour order.
 router.get('/requests', (req, res) => {
-  const rows = db.prepare(`SELECT r.id, r.name, r.city, r.state, r.note, u.username AS requestedBy,
+  const rows = db.prepare(`SELECT r.id, r.name, r.city, r.state, r.note, CASE WHEN u.profile_private = 1 THEN NULL ELSE u.username END AS requestedBy,
       (SELECT COUNT(*) FROM request_votes v WHERE v.request_id = r.id) AS votes
     FROM park_requests r JOIN users u ON u.id = r.user_id ORDER BY votes DESC, r.id DESC LIMIT 100`).all();
   const mine = req.user ? new Set(db.prepare('SELECT request_id FROM request_votes WHERE user_id = ?').all(req.user.id).map((x) => x.request_id)) : new Set();

@@ -18,6 +18,7 @@
 
 ## Kid safety model (built in, not bolted on)
 - Nickname-only accounts; birth **year** only.
+- **Private profiles:** under-13 profiles are *always* private (enforced at signup, by migration, and in `PATCH /me/settings`). Private = absent from profile pages, search, leaderboards, rider lists, follow, and park-request attribution; their preset phrases show as "A rider"; they count only in anonymous totals. Visible to the player, their parent (parent page) and admins (moderation). 13+ can opt in from account settings.
 - Under 13: parent email required → account locked from social + invisible to others until the parent approves via an emailed link (`server/email.js`; Resend, or console in dev). The same link opens a **parent page**: see everything stored, approve, or delete. Unapproved accounts are deleted after `PENDING_CONSENT_DAYS`; resend is rate-limited.
 - Under 13 can only post **preset phrases**. 13+ gets free text filtered for profanity, contact info, links and other platforms (`server/moderation.js` — extend the blocklist).
 - Report links; 3 reports auto-hide pending admin review. Delete-my-account removes all data.

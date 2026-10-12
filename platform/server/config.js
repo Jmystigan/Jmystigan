@@ -24,7 +24,7 @@ export const config = {
   jwtSecret: secret(),
   // Branding is config, not code: the studio name is expected to change.
   studioName: process.env.STUDIO_NAME || 'JMystigan Game Studios',
-  gameName: process.env.GAME_NAME || 'Skateboarding Kid',
+  gameName: process.env.GAME_NAME || 'Sk8',
   publicUrl: process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`,
   // Username that is granted admin on registration (bootstrap). Or use `npm run make-admin`.
   adminUsername: (process.env.ADMIN_USERNAME || '').toLowerCase(),

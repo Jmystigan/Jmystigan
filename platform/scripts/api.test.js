@@ -67,14 +67,15 @@ test('under-13 needs parent email and is locked from social until approved', asy
   const { outbox } = await import('../server/email.js');
   const mail = outbox.find((m) => m.to === 'parent@example.com');
   assert.ok(mail, 'parent email sent');
-  assert.match(mail.text, /kidskater/); assert.match(mail.text, /no real name/i);
+  assert.match(mail.text, /kidskater/); assert.match(mail.text, /no real name/i); assert.match(mail.text, /ALWAYS PRIVATE/);
   const tok = mail.text.match(/#\/parent\/([a-f0-9]{48})/)[1];
   assert.equal((await call('GET', '/parent/nope')).status, 404);
   const view = (await call('GET', `/parent/${tok}`)).body;
   assert.equal(view.status, 'pending'); assert.equal(view.stored.parentEmail, 'parent@example.com');
   assert.equal((await call('POST', `/parent/${tok}`, { action: 'bogus' })).status, 400);
   assert.equal((await call('POST', `/parent/${tok}`, { action: 'approve' })).status, 200);
-  assert.equal((await call('GET', '/players/kidskater')).status, 200);
+  assert.equal((await call('GET', '/players/kidskater')).status, 404); // approved, but under-13 profiles are always private
+  assert.equal((await call('GET', '/players/kidskater', null, kid.token)).status, 200); // visible to themselves
   assert.equal((await call('POST', '/auth/resend-consent', null, kid.token)).status, 400); // nothing pending any more
   // a second kid: parent deletes instead -> all data gone
   const k2 = await reg('kidtwo', y, { parentEmail: 'p2@example.com' });
@@ -146,6 +147,48 @@ test('represent exactly one park; in-game check-in is presence only', async () =
   assert.equal(list.find((p) => p.slug === p2).members, 1);
   assert.equal((await call('GET', `/parks/${parkSlug}`)).body.crew.every((c) => c.username !== 'shredder'), true);
   await call('POST', `/parks/${parkSlug}/join`, null, teen.token); // restore for later tests
+});
+
+test('private profiles: under-13 always private, 13+ can opt in, hidden from every public surface', async () => {
+  await call('PUT', '/game/stats', { level: 7, bestScore: 777, parkScores: [{ park: parkSlug, bestScore: 777, bestCombo: 7 }] }, kid.token);
+  const park = (await call('GET', `/parks/${parkSlug}`)).body;
+  assert.equal(park.leaderboard.some((r) => r.username === 'kidskater'), false);
+  assert.equal(park.crew.some((c) => c.username === 'kidskater'), false);
+  assert.ok(park.privateRiders >= 1);
+  const kidPost = park.posts.find((m) => /Great session/.test(m.body));
+  assert.equal(kidPost.username, null); // anonymised as "A rider"
+  assert.equal(JSON.stringify(park).includes('kidskater'), false); // nowhere in the public payload
+  assert.equal((await call('GET', '/players/search?q=kidsk')).body.players.length, 0);
+
+  // profile page: hidden from the public and other players; visible to self and admins
+  assert.equal((await call('GET', '/players/kidskater', null, teen.token)).status, 404);
+  const own = await call('GET', '/players/kidskater', null, kid.token);
+  assert.equal(own.status, 200); assert.equal(own.body.private, true);
+  assert.equal((await call('GET', '/players/kidskater', null, admin.token)).status, 200);
+  assert.equal((await call('POST', '/players/kidskater/follow', null, teen.token)).status, 400); // can't follow a private player
+
+  // park request by a private player doesn't expose the name
+  assert.equal((await call('POST', '/requests', { name: 'Kid Park', city: 'Waco', state: 'TX' }, kid.token)).status, 201);
+  const reqs = (await call('GET', '/requests')).body;
+  assert.equal(reqs.requests.find((r) => r.name === 'Kid Park').requestedBy, null);
+  assert.equal(JSON.stringify(reqs).includes('kidskater'), false);
+
+  // settings: kids can't go public; teens can opt in and out
+  assert.equal((await call('PATCH', '/me/settings', { profilePrivate: false }, kid.token)).status, 403);
+  assert.equal((await call('GET', '/me', null, kid.token)).body.user.canChangePrivacy, false);
+  assert.equal((await call('PATCH', '/me/settings', { profilePrivate: true })).status, 401);
+  assert.equal((await call('PATCH', '/me/settings', { profilePrivate: 'yes' }, teen.token)).status, 400);
+  assert.equal((await call('GET', '/players/shredder')).status, 200); // public by default at 13+
+  assert.equal((await call('PATCH', '/me/settings', { profilePrivate: true }, teen.token)).status, 200);
+  assert.equal((await call('GET', '/players/shredder')).status, 404);
+  assert.equal((await call('GET', `/parks/${parkSlug}`)).body.crew.some((c) => c.username === 'shredder'), false);
+  assert.equal((await call('GET', `/parks/${parkSlug}`)).body.posts.some((m) => m.username === 'shredder'), false);
+  assert.equal((await call('PATCH', '/me/settings', { profilePrivate: false }, teen.token)).status, 200);
+  assert.equal((await call('GET', '/players/shredder')).status, 200);
+  assert.equal((await call('GET', '/me', null, teen.token)).body.user.canChangePrivacy, true);
+
+  // aggregate counts still include private riders (anonymous totals)
+  assert.ok((await call('GET', '/parks')).body.parks.find((p) => p.slug === parkSlug).members >= 2);
 });
 
 test('launcher: upload, publish, manifest, license-gated download, game token scope', async () => {

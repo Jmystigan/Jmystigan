@@ -1,5 +1,7 @@
 # Title ideas
 
+> **Current working title: Sk8** (set as the default `GAME_NAME`). Notes on that choice are at the bottom; the rest are alternatives.
+
 The game name is one setting (`GAME_NAME`), so nothing is locked in. Ideas lean on what makes this game different: **real skateparks, scanned, and you represent yours.**
 
 **Top picks**
@@ -23,3 +25,12 @@ I did a quick web search on *Local Spot*, *Concrete Crew*, *Park Rep / Rep Your 
 
 ## How to choose
 Say it out loud in a sentence a kid would use ("Wanna play ___?"), check it's easy to type, and check you can get the domain + a matching handle. Then set `GAME_NAME` and (if the studio is renamed too) `STUDIO_NAME` — the site, emails, and launcher branding all follow.
+
+## About "Sk8"
+It's short, fits the culture, and looks great as a logo. Things to know before committing:
+- **It's already used a lot.** A quick search found *Thrasher SK8* (PlayStation, Japan), *Tony Hawk's American Sk8land*, *Street Sk8er*, and a planned *SK8* from Rage Software, plus a board called "SK8" in Nintendo's WarioWare. Mostly old, but it means players and search engines won't see "Sk8" as yours.
+- **Weak as a trademark.** "Sk8" is just a common spelling of "skate", so it's hard to protect and easy to be confused with EA's *skate.* A past USPTO registration for SK8 in video games was cancelled in 2015, but I couldn't confirm whether anything current exists — that needs a proper USPTO search.
+- **Hard to find.** Searching "sk8" returns skate gear, anime, and old games. Pair it with something distinctive so people can actually find *your* game.
+- **What I'd do:** keep **Sk8** as the brand but add a distinctive hook: **Sk8: Park Rep**, **Sk8 Local**, or **Sk8 Crew**. Then check the USPTO database, Steam/itch/app stores, the domain, and your social handles, and have a lawyer clear it.
+
+To change it any time: set `GAME_NAME` (everything — site, emails, launcher — follows).

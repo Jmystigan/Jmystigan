@@ -128,11 +128,12 @@ pages.park = async ([slug]) => {
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
       <section class="card"><h3>Park leaderboard</h3>${d.leaderboard.length ? `<div class="tablewrap"><table><tr><th>#</th><th>Rider</th><th>Best score</th><th>Best combo</th></tr>
         ${d.leaderboard.map((r, i) => `<tr><td>${i + 1}</td><td><a href="#/u/${esc(r.username)}">${esc(r.username)}</a></td><td>${fmt(r.bestScore)}</td><td>${fmt(r.bestCombo)}</td></tr>`).join('')}</table></div>` : '<p class="mute">No scores yet — be the first.</p>'}</section>
-      <section class="card"><h3>Riders representing <span class="mute small">(${d.crew.length})</span></h3>${d.crew.length ? d.crew.map((c) =>
-        `<div><span class="dot ${c.online ? '' : 'off'}"></span><a href="#/u/${esc(c.username)}">${esc(c.username)}</a> <span class="mute small">Lv ${c.level} · ${fmt(c.bestScore)} pts${c.online ? ' · skating now' : ''}</span></div>`).join('') : '<p class="mute">Nobody yet.</p>'}</section>
+      <section class="card"><h3>Riders representing <span class="mute small">(${d.crew.length + d.privateRiders})</span></h3>${d.crew.length ? d.crew.map((c) =>
+        `<div><span class="dot ${c.online ? '' : 'off'}"></span><a href="#/u/${esc(c.username)}">${esc(c.username)}</a> <span class="mute small">Lv ${c.level} · ${fmt(c.bestScore)} pts${c.online ? ' · skating now' : ''}</span></div>`).join('') : (d.privateRiders ? '' : '<p class="mute">Nobody yet.</p>')}
+        ${d.privateRiders ? `<p class="mute small">🔒 + ${d.privateRiders} private rider${d.privateRiders === 1 ? '' : 's'}</p>` : ''}</section>
     </div>
     <section class="card" style="margin-top:14px"><h3>Park board</h3>${compose}
-      <div id="posts">${d.posts.map((m) => `<div class="post"><a href="#/u/${esc(m.username)}"><b>${esc(m.username)}</b></a> <span class="mute small">${esc(when(m.createdAt))}</span><br>${esc(m.body)}
+      <div id="posts">${d.posts.map((m) => `<div class="post">${m.username ? `<a href="#/u/${esc(m.username)}"><b>${esc(m.username)}</b></a>` : '<b>A rider</b>'} <span class="mute small">${esc(when(m.createdAt))}</span><br>${esc(m.body)}
         ${u && u.social ? ` <a href="#" class="small mute" data-report="${m.id}">report</a>` : ''}</div>`).join('') || '<p class="mute">Quiet so far.</p>'}</div></section>`;
 };
 pages.park.after = ([slug]) => {
@@ -172,8 +173,9 @@ pages.tour.after = () => {
 };
 
 function profileHtml(p, mine) {
+  const lock = p.private && mine ? `<div class="notice">🔒 <b>Your profile is private.</b> Only you${state.user?.age < 13 ? ' and your parent' : ''} can see it. It isn't shown on leaderboards, rider lists or search, and your park posts show as “A rider”.</div>` : '';
   const next = p.level * 1000, pct = Math.min(100, Math.round(((p.xp % next) / next) * 100));
-  return `<div class="row"><h1 class="grow">${esc(p.username)}</h1>${p.homePark ? `<a class="pill" href="#/parks/${esc(p.homePark.slug)}">🏠 ${esc(p.homePark.name)}</a>` : ''}</div>
+  return `${lock}<div class="row"><h1 class="grow">${esc(p.username)}${p.private ? ' 🔒' : ''}</h1>${p.homePark ? `<a class="pill" href="#/parks/${esc(p.homePark.slug)}">🏠 ${esc(p.homePark.name)}</a>` : ''}</div>
     <div class="row mute small"><span>Joined ${esc(when(p.joined))}</span><span>${p.followers} follower${p.followers === 1 ? '' : 's'}</span></div>
     <div class="stats"><div class="stat"><b>${p.level}</b><span>Level</span></div><div class="stat"><b>${fmt(p.bestScore)}</b><span>Best score</span></div>
       <div class="stat"><b>${fmt(p.bestCombo)}</b><span>Best combo</span></div><div class="stat"><b>${p.tricks.length}</b><span>Tricks known</span></div><div class="stat"><b>${p.playHours}h</b><span>Time skated</span></div></div>
@@ -190,9 +192,15 @@ pages.me = async () => {
   return `${u.consentStatus === 'pending' ? '<div class="notice">We emailed your parent/guardian to approve your account. Social features unlock after they approve. <button class="btn sm ghost" id="resend" style="margin-left:8px">Resend the email</button></div>' : ''}
     ${profileHtml(p, true)}
     <section class="card" style="margin-top:14px"><h3>Account</h3>
+      ${u.canChangePrivacy ? `<label class="row" style="flex-direction:row;font-weight:400;margin-bottom:12px"><input type="checkbox" id="priv" style="width:auto;min-height:0" ${u.profilePrivate ? 'checked' : ''}> <span>Private profile — hide me from leaderboards, rider lists and search (my posts show as “A rider”)</span></label>`
+        : '<p class="small mute">🔒 Profiles for players under 13 are always private.</p>'}
       <div class="row"><a class="btn ghost sm" href="#/play">Redeem a key / get the game</a><button class="btn danger sm" id="delacct">Delete my account &amp; data</button></div></section>`;
 };
 pages.me.after = () => {
+  $('#priv')?.addEventListener('change', async (e) => {
+    try { await api('PATCH', '/me/settings', { profilePrivate: e.target.checked }); await refreshUser(); toast(e.target.checked ? 'Profile is now private' : 'Profile is now public'); route(); }
+    catch (x) { toast(x.message); e.target.checked = !e.target.checked; }
+  });
   $('#resend')?.addEventListener('click', async () => { try { await post('/auth/resend-consent'); toast('Sent! Ask your parent to check their inbox (and spam).'); } catch (x) { toast(x.message); } });
   $('#delacct')?.addEventListener('click', async () => {
     if (!confirm('Delete your account and all your data? This cannot be undone.')) return;
@@ -248,7 +256,8 @@ pages.parent = async ([token]) => {
       <tr><td>Level / best score</td><td>${esc(s.level)} / ${fmt(s.bestScore)}</td></tr><tr><td>Tricks known</td><td>${esc(s.tricksKnown)}</td></tr><tr><td>Skatepark they represent</td><td>${esc(s.representing ?? '—')}</td></tr></table>
       <p class="small mute">No real name, address, phone number or photo. No ads. We never sell data. See <a href="#/safety">Safety &amp; privacy</a>.</p></div>
     <div class="card" style="margin-top:14px"><h3>What approving allows</h3>
-      <ul><li>Representing one local skatepark and appearing on its leaderboard and rider list.</li><li>Sending <b>pre-written phrases</b> on that park's board (never free text). No private messages.</li></ul>
+      <ul><li>Representing one local skatepark.</li><li>Sending <b>pre-written phrases</b> on that park's board (never free text). No private messages.</li></ul>
+      <p>🔒 <b>Their profile is always private.</b> Their nickname, level, tricks and scores are never shown to other players — not on profiles, leaderboards, rider lists or search. Their phrases appear only as “A rider”, and they're counted only in anonymous park totals.</p>
       <div class="row">${d.status === 'approved' ? '' : '<button class="btn" id="approve">Approve</button>'}<button class="btn danger" id="del">Delete account &amp; all data</button></div>
       <p class="small mute">You can come back to this page any time from the email link. Deleting is permanent.</p></div>`;
 };
@@ -312,6 +321,7 @@ pages.safety = () => `<h1>Safety &amp; privacy</h1>
   <div class="card"><ul>
   <li><b>Nicknames only.</b> No real names, no addresses, no phone numbers — and the park board blocks messages that look like contact details.</li>
   <li><b>Under 13?</b> We email a parent or guardian, and the account stays locked and hidden until they approve. They can review everything we store and delete it any time from the link in that email. Unapproved accounts are deleted automatically after 14 days. Younger players send pre-written phrases only, never free text.</li>
+  <li><b>Under-13 profiles are always private.</b> Their name, stats and scores are never shown to other players; their board phrases appear as “A rider”. Players 13+ can also hide their profile in account settings.</li>
   <li><b>Reporting.</b> Every board message has a report link. Reported messages are hidden quickly and reviewed by a human.</li>
   <li><b>Your data.</b> We store your username, birth year, game stats and (for under-13s) a parent email. You or a parent can delete the account and all data any time from the profile page.</li>
   <li><b>Players only.</b> Accounts need a code that comes with the game, so everyone here is a real player.</li><li><b>No ads, no selling data.</b></li></ul>

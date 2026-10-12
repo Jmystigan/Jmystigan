@@ -137,6 +137,10 @@ for (const col of ['external_id TEXT', 'email TEXT', 'payment_intent TEXT', 'rev
   try { db.exec(`ALTER TABLE licenses ADD COLUMN ${col}`); } catch { /* already exists */ }
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_lic_pi ON licenses(payment_intent)');
+// Private profiles: hidden from lists, search, leaderboards and profile pages; counted only in anonymous totals.
+// Always on for under-13s (enforced here and in the settings route); 13+ can choose.
+try { db.exec('ALTER TABLE users ADD COLUMN profile_private INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+db.exec("UPDATE users SET profile_private = 1 WHERE profile_private = 0 AND (CAST(strftime('%Y','now') AS INTEGER) - birth_year) < 13");
 
 export function tx(fn) {
   db.exec('BEGIN');

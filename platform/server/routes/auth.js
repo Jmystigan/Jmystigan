@@ -9,7 +9,7 @@ export const router = Router();
 
 export const publicUser = (u) => ({
   id: u.id, username: u.username, role: u.role, age: ageOf(u),
-  consentStatus: u.consent_status, social: canSocial(u),
+  consentStatus: u.consent_status, social: canSocial(u), profilePrivate: !!u.profile_private, canChangePrivacy: ageOf(u) >= 13,
 });
 
 const parentLink = (u) => `${config.publicUrl}/#/parent/${u.consent_token}`;
@@ -39,8 +39,8 @@ router.post('/auth/register', rateLimit('reg', config.registerPerHour, 3600_000,
   const consentToken = under13 ? crypto.randomBytes(24).toString('hex') : null;
   const role = name === config.adminUsername ? 'admin' : 'player';
   const user = tx(() => {
-    const r = db.prepare(`INSERT INTO users (username, pass_hash, role, birth_year, parent_email, consent_status, consent_token)
-      VALUES (?,?,?,?,?,?,?)`).run(name, hashPassword(password), role, year, under13 ? parentEmail : null, under13 ? 'pending' : 'not_required', consentToken);
+    const r = db.prepare(`INSERT INTO users (username, pass_hash, role, birth_year, parent_email, consent_status, consent_token, profile_private)
+      VALUES (?,?,?,?,?,?,?,?)`).run(name, hashPassword(password), role, year, under13 ? parentEmail : null, under13 ? 'pending' : 'not_required', consentToken, under13 ? 1 : 0);
     db.prepare('INSERT INTO players (user_id) VALUES (?)').run(r.lastInsertRowid);
     if (lic) db.prepare("UPDATE licenses SET user_id = ?, redeemed_at = datetime('now') WHERE key = ?").run(r.lastInsertRowid, code);
     return db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
@@ -59,6 +59,14 @@ router.post('/auth/login', rateLimit('login', 20, 600_000, (r) => r.ip), (req, r
   res.json({ token: signToken(u), user: publicUser(u) });
 });
 
+// 13+ may hide their profile; under-13 profiles are always private and cannot be made public.
+router.patch('/me/settings', requireWeb, (req, res) => {
+  if (typeof req.body?.profilePrivate !== 'boolean') return res.status(400).json({ error: 'profilePrivate must be true or false' });
+  if (ageOf(req.user) < 13) return res.status(403).json({ error: 'Profiles for players under 13 are always private' });
+  db.prepare('UPDATE users SET profile_private = ? WHERE id = ?').run(req.body.profilePrivate ? 1 : 0, req.user.id);
+  res.json({ ok: true, profilePrivate: req.body.profilePrivate });
+});
+
 router.get('/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
 
 // Parent control page (link only ever goes to the parent email). Same token lets them review, approve, or delete.
@@ -70,7 +78,7 @@ router.get('/parent/:token', rateLimit('parent', 60, 600_000, (r) => r.ip), (req
   const tricks = db.prepare('SELECT COUNT(*) c FROM tricks WHERE user_id = ?').get(u.id).c;
   const park = db.prepare('SELECT pk.name FROM park_members m JOIN parks pk ON pk.id = m.park_id WHERE m.user_id = ?').get(u.id);
   res.json({ child: u.username, status: u.consent_status, joined: u.created_at,
-    stored: { nickname: u.username, birthYear: u.birth_year, parentEmail: u.parent_email, level: p.level, bestScore: p.best_score, tricksKnown: tricks, representing: park?.name ?? null } });
+    stored: { nickname: u.username, birthYear: u.birth_year, parentEmail: u.parent_email, level: p.level, bestScore: p.best_score, tricksKnown: tricks, representing: park?.name ?? null, profilePrivate: true } });
 });
 router.post('/parent/:token', rateLimit('parent', 60, 600_000, (r) => r.ip), (req, res) => {
   const u = parentRow(req.params.token);

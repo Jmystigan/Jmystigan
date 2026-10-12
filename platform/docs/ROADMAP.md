@@ -14,10 +14,13 @@
 - One represented park per player (switching replaces). In-game check-in is presence only.
 - Build hosting/launcher are optional (`HOST_BUILDS=1`); your own launcher is the default assumption.
 
-## Done this round
+## Done most recently
+- **Private profiles for under-13s** (always on; 13+ can opt in): hidden from profiles, search, leaderboards, rider lists, follow; posts show as "A rider"; anonymous counts only. Parent email/page and Safety page say so. Title set to **Sk8**.
+
+## Done earlier
 - Parent consent by email (Resend, dev console fallback), parent review/approve/delete page, resend, auto-purge of unapproved accounts.
 - Stripe Checkout + signed webhooks: auto-issued codes (idempotent), emailed; full refund / dispute → access ends & account suspended; dispute won → reinstated; suspended accounts auto-deleted after 90 days.
-- 15 integration tests (Stripe signatures are real; only the outbound Checkout call is stubbed).
+- 16 integration tests (Stripe signatures are real; only the outbound Checkout call is stubbed).
 
 ## Not verified against live services
 - Never run against **real Stripe or Resend** (no credentials/network here). Do a full test-mode purchase, refund, and email send before launch.
