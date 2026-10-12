@@ -7,7 +7,7 @@ import { db, tx } from '../db.js';
 import { config } from '../config.js';
 import { requireWeb, requireSocial, rateLimit, ageOf } from '../auth.js';
 import { checkText } from '../moderation.js';
-import { project, unproject, distanceM } from '../geo.js';
+import { project, unproject, stateAt, distanceM } from '../geo.js';
 import { sanitizeImage } from '../images.js';
 
 export const router = Router();
@@ -21,7 +21,7 @@ const spotJson = (s, viewer) => {
   const p = project(s.lat, s.lng) ?? [null, null];
   const pub = PUBLIC.includes(s.status), canSee = pub || viewer?.id === s.user_id || viewer?.role === 'admin';
   return {
-    id: s.id, name: s.name, description: s.description, lat: s.lat, lng: s.lng, x: p[0], y: p[1], tags: JSON.parse(s.tags), status: s.status,
+    id: s.id, name: s.name, description: s.description, lat: s.lat, lng: s.lng, state: s.state, x: p[0], y: p[1], tags: JSON.parse(s.tags), status: s.status,
     votes: s.votes, voted: !!s.voted, mine: viewer?.id === s.user_id, createdAt: s.created_at,
     discoveredBy: s.private || !s.username ? null : s.username,
     parkSlug: s.park_slug ?? null,
@@ -46,7 +46,8 @@ router.post('/spots', requireWeb, requireSocial, rateLimit('spot', 20, 24 * 3600
   // Position comes from GPS / pasted coordinates (lat,lng) or from tapping the map (x,y in the map frame).
   let lat = Number(req.body?.lat), lng = Number(req.body?.lng);
   if (req.body?.x !== undefined && req.body?.lat === undefined) { const u = unproject(Number(req.body.x), Number(req.body.y)); lat = u?.lat; lng = u?.lng; }
-  if (!project(lat, lng)) return res.status(400).json({ error: 'Drop the pin somewhere in the US map' });
+  const xy = project(lat, lng), state = xy ? stateAt(xy[0], xy[1]) : null;
+  if (!state) return res.status(400).json({ error: 'Drop the pin on US land (the map covers the 50 states + DC)' });
   let tags = String(req.body?.tags ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
   if (tags.some((t) => !SPOT_TAGS.includes(t))) return res.status(400).json({ error: 'Unknown tag' });
   tags = [...new Set(tags)].slice(0, 8);
@@ -78,7 +79,7 @@ router.post('/spots', requireWeb, requireSocial, rateLimit('spot', 20, 24 * 3600
     if (distanceM(lat, lng, s.lat, s.lng) < 70) return res.status(409).json({ error: 'Someone already found this spot — give it a vote instead!', spotId: s.id });
 
   const id = tx(() => {
-    const r = db.prepare('INSERT INTO spots (user_id, name, description, lat, lng, tags) VALUES (?,?,?,?,?,?)').run(req.user.id, name, description, lat, lng, JSON.stringify(tags));
+    const r = db.prepare('INSERT INTO spots (user_id, name, description, lat, lng, tags, state) VALUES (?,?,?,?,?,?,?)').run(req.user.id, name, description, lat, lng, JSON.stringify(tags), state);
     for (const img of cleaned) {
       const stored = `${crypto.randomUUID()}.${img.ext}`;
       fs.writeFileSync(path.join(config.uploadsDir, stored), img.data, { mode: 0o640 });

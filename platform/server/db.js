@@ -172,6 +172,7 @@ for (const col of ['external_id TEXT', 'email TEXT', 'payment_intent TEXT', 'rev
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_lic_pi ON licenses(payment_intent)');
 try { db.exec('ALTER TABLE parks ADD COLUMN spot_id INTEGER'); } catch { /* already exists */ }
+try { db.exec('ALTER TABLE spots ADD COLUMN state TEXT'); } catch { /* already exists */ }
 // Private profiles: hidden from lists, search, leaderboards and profile pages; counted only in anonymous totals.
 // Always on for under-13s (enforced here and in the settings route); 13+ can choose.
 try { db.exec('ALTER TABLE users ADD COLUMN profile_private INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }

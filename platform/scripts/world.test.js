@@ -105,13 +105,13 @@ test('spots: kids pin + tags only, 13+ add name/notes/photos; metadata stripped;
 
   // validation
   assert.equal((await form(teen.token, '/spots', { lat: 51.5, lng: -0.12, name: 'London spot' })).status, 400); // off-map
-  assert.equal((await form(teen.token, '/spots', { ...pin, lat: 36.5, tags: 'nuke', name: 'Bad Tag' })).status, 400);
-  assert.equal((await form(teen.token, '/spots', { lat: 36.5, lng: -101.8, name: 'text me 555-123-4567' })).status, 400);
-  assert.equal((await form(teen.token, '/spots', { lat: 36.5, lng: -101.8, name: 'Bad Image' }, [['x.jpg', Buffer.from('not an image at all'), 'image/jpeg']])).status, 400);
-  assert.equal((await form(teen.token, '/spots', { lat: 36.5, lng: -101.8, name: 'Huge' }, [['x.jpg', Buffer.alloc(7 * 1024 * 1024, 1), 'image/jpeg']])).status, 413);
+  assert.equal((await form(teen.token, '/spots', { ...pin, lat: 35.5, tags: 'nuke', name: 'Bad Tag' })).status, 400);
+  assert.equal((await form(teen.token, '/spots', { lat: 35.5, lng: -101.8, name: 'text me 555-123-4567' })).status, 400);
+  assert.equal((await form(teen.token, '/spots', { lat: 35.5, lng: -101.8, name: 'Bad Image' }, [['x.jpg', Buffer.from('not an image at all'), 'image/jpeg']])).status, 400);
+  assert.equal((await form(teen.token, '/spots', { lat: 35.5, lng: -101.8, name: 'Huge' }, [['x.jpg', Buffer.alloc(7 * 1024 * 1024, 1), 'image/jpeg']])).status, 413);
 
   // 13+ with a JPEG and a PNG that both carry metadata
-  const ok = await form(teen.token, '/spots', { lat: 36.5, lng: -101.8, name: 'Courthouse Ledges', description: 'Smooth marble ledges, quiet on Sundays', tags: 'ledge,plaza' },
+  const ok = await form(teen.token, '/spots', { lat: 35.5, lng: -101.8, name: 'Courthouse Ledges', description: 'Smooth marble ledges, quiet on Sundays', tags: 'ledge,plaza' },
     [['a.jpg', jpegWithExif(), 'image/jpeg'], ['b.png', pngWithText(), 'image/png']]);
   assert.equal(ok.status, 201); const id = ok.body.id;
   const stored = fs.readdirSync(path.join(dir, 'uploads'));
@@ -129,11 +129,15 @@ test('spots: kids pin + tags only, 13+ add name/notes/photos; metadata stripped;
   const tapped = db.prepare('SELECT lat, lng FROM spots WHERE id = ?').get(tap.body.id);
   assert.ok(Math.abs(tapped.lat - 34.0) < 0.2 && Math.abs(tapped.lng + 112.0) < 0.2, `tap -> ${tapped.lat},${tapped.lng}`);
   assert.equal((await form(teen.token, '/spots', { x: 5, y: 5, name: 'Middle Of Ocean' })).status, 400);
+  assert.equal((await form(teen.token, '/spots', { lat: 49.9, lng: -97.1, name: 'Winnipeg Canada' })).status, 400);   // inside the map rectangle, but not US land
+  assert.equal((await form(teen.token, '/spots', { lat: 19.4, lng: -99.1, name: 'Mexico City' })).status, 400);
+  assert.equal((await form(teen.token, '/spots', { lat: 28.0, lng: -88.0, name: 'Gulf Of Mexico' })).status, 400);
+  assert.equal(db.prepare('SELECT state FROM spots WHERE id = ?').get(tap.body.id)?.state ?? 'AZ', 'AZ');
   assert.equal((await call('DELETE', `/spots/${tap.body.id}`, null, teen.token)).status, 200);
 
   // duplicates
   const near = (lat, lng) => form(teen.token, '/spots', { lat, lng, name: 'Same Place' });
-  assert.equal((await near(36.50002, -101.80002)).body.spotId, id);          // existing spot
+  assert.equal((await near(35.50002, -101.80002)).body.spotId, id);          // existing spot
   const dupPark = await near(30.2701, -97.7401);
   assert.equal(dupPark.status, 409); assert.ok(dupPark.body.parkSlug);        // already a park in the game
 
@@ -162,11 +166,11 @@ test('spots: kids pin + tags only, 13+ add name/notes/photos; metadata stripped;
 
   // promote to a park on the tour; finder is credited; revision bumps
   const rev = (await call('GET', '/world')).body.revision;
-  assert.equal((await call('POST', `/admin/spots/${id}/promote`, { city: 'Amarillo' }, admin.token)).status, 400); // needs a state
-  const pr = await call('POST', `/admin/spots/${id}/promote`, { city: 'Amarillo', state: 'tx', visitDate: '2027-01-15' }, admin.token);
+  assert.equal((await call('POST', `/admin/spots/${id}/promote`, {}, admin.token)).status, 400); // needs a city
+  const pr = await call('POST', `/admin/spots/${id}/promote`, { city: 'Amarillo', visitDate: '2027-01-15' }, admin.token);
   assert.equal(pr.status, 201);
   const park = (await call('GET', `/parks/${pr.body.slug}`)).body;
-  assert.equal(park.park.status, 'scheduled'); assert.equal(park.discoveredBy, 'spotfinder');
+  assert.equal(park.park.status, 'scheduled'); assert.equal(park.park.state, 'TX'); assert.equal(park.discoveredBy, 'spotfinder');
   assert.ok((await call('GET', '/world')).body.revision > rev);
   assert.equal((await pub()).body.spots.find((x) => x.id === id).parkSlug, pr.body.slug);
   assert.equal((await call('POST', `/admin/spots/${id}/promote`, { city: 'Amarillo', state: 'TX' }, admin.token)).status, 409);

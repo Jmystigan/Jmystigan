@@ -192,8 +192,8 @@ router.post('/admin/spots/:id/promote', (req, res) => {
   if (!spot) return res.status(404).json({ error: 'Not found' });
   if (spot.status === 'converted') return res.status(409).json({ error: 'Already converted' });
   const b = req.body ?? {};
-  const state = String(b.state ?? '').toUpperCase(), city = String(b.city ?? '').trim();
-  if (!city || !db.prepare('SELECT 1 FROM regions WHERE code = ?').get(state)) return res.status(400).json({ error: 'city and a 2-letter state are required' });
+  const state = String(b.state || spot.state || '').toUpperCase(), city = String(b.city ?? '').trim();
+  if (!city || !db.prepare('SELECT 1 FROM regions WHERE code = ?').get(state)) return res.status(400).json({ error: 'city is required (and a 2-letter state if the spot has none)' });
   const name = String(b.name || spot.name).trim().slice(0, 80);
   const slugBase = `${name}-${city}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
   try {
