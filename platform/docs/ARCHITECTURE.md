@@ -8,7 +8,8 @@
 | Players | `GET /players/:name` `GET /players/search?q=` `POST/DELETE /players/:name/follow` `GET /me/profile` |
 | Parks | `GET /parks` `GET /parks/:slug` `POST/DELETE /parks/:slug/join` `POST /parks/:slug/posts` `POST /posts/:id/report` |
 | Tour | `GET/POST /requests` `POST/DELETE /requests/:id/vote` |
-| Launcher | `GET /config` `GET /launcher/manifest?kind=game\|launcher&channel=&platform=` `GET /launcher/download/:id` (Range-capable) `POST /launcher/game-token` `POST /licenses/redeem` `GET /library` |
+| Partner (your launcher backend) | `POST /partner/codes` (Bearer `LAUNCHER_API_KEY`) — mint/lookup a one-time signup code per customer |
+| Launcher (only with `HOST_BUILDS=1`) | `GET /config` `GET /launcher/manifest?kind=game\|launcher&channel=&platform=` `GET /launcher/download/:id` (Range-capable) `POST /launcher/game-token` `POST /licenses/redeem` `GET /library` |
 | Admin | `/admin/builds` (upload/list/publish/delete) `/admin/parks` `/admin/licenses` `/admin/reports` `/admin/posts/:id/moderate` `/admin/users` |
 
 ### Token scopes

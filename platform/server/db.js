@@ -114,12 +114,22 @@ CREATE TABLE IF NOT EXISTS licenses (
   key TEXT PRIMARY KEY,
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   note TEXT NOT NULL DEFAULT '',
+  external_id TEXT UNIQUE,                 -- customer id from your launcher/store, when issued via the partner API
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   redeemed_at TEXT
+);
+-- Where a player is playing right now (set by the game). Separate from the ONE park they represent (park_members).
+CREATE TABLE IF NOT EXISTS park_presence (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  park_id INTEGER NOT NULL REFERENCES parks(id) ON DELETE CASCADE,
+  last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, park_id)
 );
 CREATE INDEX IF NOT EXISTS idx_posts_park ON posts(park_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_park ON park_scores(park_id, best_score DESC);
 `);
+
+try { db.exec('ALTER TABLE licenses ADD COLUMN external_id TEXT'); } catch { /* already exists */ }
 
 export function tx(fn) {
   db.exec('BEGIN');

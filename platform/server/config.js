@@ -32,4 +32,10 @@ export const config = {
   // Stat sanity caps (server-side anti-cheat floor; tune to your game's real ceilings).
   caps: { level: 100, score: 50_000_000, combo: 1_000_000, playSeconds: 60 * 60 * 24 * 365, tricks: 500 },
   presenceMinutes: 10,
+  registerPerHour: Number(process.env.REGISTER_PER_HOUR || 10), // per IP
+  // Your existing launcher stays the source of truth for the game. This app only needs to know who is a customer.
+  // Your launcher backend calls POST /api/partner/codes with this key to mint a one-time signup code per customer.
+  partnerApiKey: process.env.LAUNCHER_API_KEY || '',
+  launcherUrl: process.env.LAUNCHER_URL || '',        // where "Get the game" sends people
+  hostBuilds: process.env.HOST_BUILDS === '1',        // optional built-in build hosting/launcher endpoints (off by default)
 };

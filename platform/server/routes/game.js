@@ -51,7 +51,8 @@ router.put('/game/stats', requireAuth, rateLimit('stats', 30, 60_000), (req, res
 router.post('/game/checkin', requireAuth, rateLimit('checkin', 30, 60_000), (req, res) => {
   const p = db.prepare('SELECT id FROM parks WHERE slug = ?').get(String(req.body?.park ?? ''));
   if (!p) return res.status(404).json({ error: 'Unknown park' });
-  db.prepare(`INSERT INTO park_members (user_id, park_id) VALUES (?,?)
+  // Presence only. Which park a player *represents* is their choice on the website and never changes from in-game.
+  db.prepare(`INSERT INTO park_presence (user_id, park_id) VALUES (?,?)
     ON CONFLICT(user_id, park_id) DO UPDATE SET last_seen = datetime('now')`).run(req.user.id, p.id);
   res.json({ ok: true });
 });

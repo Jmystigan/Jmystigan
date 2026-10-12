@@ -11,8 +11,8 @@ export const publicUser = (u) => ({
   consentStatus: u.consent_status, social: canSocial(u),
 });
 
-router.post('/auth/register', rateLimit('reg', 10, 3600_000, (r) => r.ip), (req, res) => {
-  const { username, password, birthYear, parentEmail } = req.body ?? {};
+router.post('/auth/register', rateLimit('reg', config.registerPerHour, 3600_000, (r) => r.ip), (req, res) => {
+  const { username, password, birthYear, parentEmail, signupCode } = req.body ?? {};
   const name = String(username ?? '').toLowerCase();
   if (!/^[a-z0-9_]{3,20}$/.test(name)) return res.status(400).json({ error: 'Username: 3-20 letters, numbers or _ (use a nickname, not your real name)' });
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
@@ -22,12 +22,22 @@ router.post('/auth/register', rateLimit('reg', 10, 3600_000, (r) => r.ip), (req,
   if (under13 && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(parentEmail ?? ''))) return res.status(400).json({ error: 'A parent/guardian email is required for players under 13' });
   if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(name)) return res.status(409).json({ error: 'That username is taken' });
 
+  // Customers only: a signup code comes from the game (your launcher) or a game key. The bootstrap admin is exempt.
+  const isBootstrapAdmin = !!config.adminUsername && name === config.adminUsername;
+  const code = String(signupCode ?? '').trim().toUpperCase();
+  const lic = code ? db.prepare('SELECT * FROM licenses WHERE key = ?').get(code) : null;
+  if (!isBootstrapAdmin) {
+    if (!lic) return res.status(403).json({ error: 'A valid game code is required. Get yours from the launcher after purchasing the game.' });
+    if (lic.user_id) return res.status(409).json({ error: 'That game code has already been used' });
+  }
+
   const consentToken = under13 ? crypto.randomBytes(24).toString('hex') : null;
   const role = name === config.adminUsername ? 'admin' : 'player';
   const user = tx(() => {
     const r = db.prepare(`INSERT INTO users (username, pass_hash, role, birth_year, parent_email, consent_status, consent_token)
       VALUES (?,?,?,?,?,?,?)`).run(name, hashPassword(password), role, year, under13 ? parentEmail : null, under13 ? 'pending' : 'not_required', consentToken);
     db.prepare('INSERT INTO players (user_id) VALUES (?)').run(r.lastInsertRowid);
+    if (lic) db.prepare("UPDATE licenses SET user_id = ?, redeemed_at = datetime('now') WHERE key = ?").run(r.lastInsertRowid, code);
     return db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
   });
   if (under13) {

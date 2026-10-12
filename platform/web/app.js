@@ -32,7 +32,7 @@ async function refreshUser() {
 function renderNav() {
   const u = state.user, h = location.hash || '#/';
   const l = (href, text) => `<a href="${href}" class="${h === href || (href !== '#/' && h.startsWith(href)) ? 'on' : ''}">${text}</a>`;
-  $('#nav').innerHTML = [l('#/parks', 'Parks'), l('#/tour', 'Tour'), l('#/play', 'Play'),
+  $('#nav').innerHTML = [l('#/parks', 'Parks'), l('#/tour', 'Tour'), (state.cfg.hostBuilds || state.cfg.launcherUrl) ? l('#/play', 'Get the game') : '',
     u ? l('#/me', esc(u.username)) : l('#/login', 'Log in'),
     u?.role === 'admin' ? l('#/admin', 'Admin') : '',
     u ? '<a href="#/logout">Log out</a>' : '<a class="btn sm" href="#/register">Sign up</a>'].join('');
@@ -44,46 +44,66 @@ const pages = {};
 
 pages.home = async () => {
   const { parks } = await get('/parks');
-  const live = parks.filter((p) => p.status === 'in_game').length;
+  const reps = parks.reduce((n, p) => n + p.members, 0);
+  const top = [...parks].sort((a, b) => b.members - a.members || b.crewScore - a.crewScore).slice(0, 6);
   return `
   <section class="hero">
-    <h1>Every park. Every rider.<br>One game.</h1>
-    <p>${esc(state.cfg.studioName)} is scanning real skate parks across the country and dropping them into <b>${esc(state.cfg.gameName)}</b>.
-       Skate your local park, meet the crew that rides it, and watch your level, tricks and bests follow you everywhere.</p>
-    <div class="row"><a class="btn" href="#/play">Get the launcher</a><a class="btn ghost" href="#/parks">Browse parks</a><a class="btn ghost" href="#/tour">Request my park</a></div>
+    <h1>Represent your park.</h1>
+    <p>The crew app for <b>${esc(state.cfg.gameName)}</b> players. Claim your local skatepark, see who else in your area rides it,
+       and show off your level, tricks and best scores. Players-only — you sign up with the code that comes with the game from ${esc(state.cfg.studioName)}.</p>
+    <div class="row"><a class="btn" href="#/register">Sign up with your game code</a><a class="btn ghost" href="#/parks">Find my park</a><a class="btn ghost" href="#/tour">Request a park</a></div>
   </section>
   <h2>How it works</h2>
   <ol class="steps">
-    <li><h3>We visit the park</h3>We scan real skate parks on location — ledges, rails, bowls and all — and rebuild them for the game.</li>
-    <li><h3>You skate it</h3>Install the game through our launcher. New parks arrive as updates, no reinstalling.</li>
-    <li><h3>Meet the crew</h3>Join the park's crew, see who's online, trade quick messages and chase the park leaderboard.</li>
-    <li><h3>Take it with you</h3>Your profile — level, tricks, personal bests — lives online, on your phone or in a browser.</li>
+    <li><h3>Get the game</h3>Install ${esc(state.cfg.gameName)} from the ${esc(state.cfg.studioName)} launcher. You'll get a code to unlock your account here.</li>
+    <li><h3>Pick your park</h3>Choose the skatepark you rep. One park per rider — switch any time.</li>
+    <li><h3>Meet your crew</h3>See locals, who's online, and trade quick messages on your park's board.</li>
+    <li><h3>Rep it</h3>Your level, tricks and bests show on your profile. Parks compete for the most riders and the biggest crew score.</li>
   </ol>
-  <h2 style="margin-top:28px">On the tour</h2>
-  <p class="mute">${live} park${live === 1 ? '' : 's'} in the game so far, ${parks.length} on the map.</p>
-  <div class="grid">${parks.slice(0, 6).map(parkCard).join('') || '<p class="mute">The first parks are coming soon.</p>'}</div>`;
+  <h2 style="margin-top:28px">Top parks</h2>
+  <p class="mute">${reps} rider${reps === 1 ? '' : 's'} representing across ${parks.length} park${parks.length === 1 ? '' : 's'}. Your park not here? <a href="#/tour">Request it.</a></p>
+  <div class="grid">${top.map(parkCard).join('') || '<p class="mute">The first parks are coming soon.</p>'}</div>`;
 };
 
 function parkCard(p) {
   return `<a class="card" href="#/parks/${esc(p.slug)}" style="display:block;color:inherit;text-decoration:none">
     <div class="row"><h3 class="grow">${esc(p.name)}</h3>${pill(p.status)}</div>
     <div class="mute small">${esc(p.city)}, ${esc(p.state)}${p.visitDate && p.status === 'scheduled' ? ' · visit ' + esc(when(p.visitDate)) : ''}</div>
-    <div class="small" style="margin-top:8px"><span class="dot ${p.onlineNow ? '' : 'off'}"></span>${p.onlineNow} online · ${p.members} in the crew</div></a>`;
+    <div class="small" style="margin-top:8px"><span class="dot ${p.onlineNow ? '' : 'off'}"></span>${p.onlineNow} playing now · ${p.members} rep${p.members === 1 ? '' : 's'} · crew score ${fmt(p.crewScore)}</div></a>`;
 }
 
 pages.parks = async () => {
   const { parks } = await get('/parks');
   state.parks = parks;
-  return `<h1>Parks</h1><label style="max-width:320px;margin-bottom:16px">Filter<input id="q" placeholder="Search name, city or state"></label>
-    <div class="grid" id="plist">${parks.map(parkCard).join('') || '<p class="mute">No parks yet.</p>'}</div>
-    `;
+  const states = [...new Set(parks.map((p) => p.state))].sort();
+  return `<h1>Find your park</h1>
+    <div class="row" style="margin-bottom:16px;align-items:end">
+      <label class="grow" style="min-width:200px">Search<input id="q" placeholder="Park, city or state"></label>
+      <label>State<select id="st"><option value="">All</option>${states.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
+      <label>Sort<select id="sort"><option value="reps">Most riders</option><option value="score">Crew score</option><option value="status">In the game first</option></select></label>
+      <button class="btn ghost" id="near" type="button">📍 Near me</button></div>
+    <div class="grid" id="plist"></div>`;
 };
 pages.parks.after = () => {
-  const parks = state.parks;
-  $('#q').oninput = (e) => {
-    const q = e.target.value.toLowerCase();
-    $('#plist').innerHTML = parks.filter((p) => `${p.name} ${p.city} ${p.state}`.toLowerCase().includes(q)).map(parkCard).join('') || '<p class="mute">No matches.</p>';
+  const all = state.parks; let here = null;
+  const km = (p) => { // haversine
+    const r = Math.PI / 180, dLat = (p.lat - here.lat) * r, dLng = (p.lng - here.lng) * r;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(here.lat * r) * Math.cos(p.lat * r) * Math.sin(dLng / 2) ** 2;
+    return 12742 * Math.asin(Math.sqrt(a));
   };
+  const draw = () => {
+    const q = $('#q').value.toLowerCase(), st = $('#st').value, sort = $('#sort').value;
+    let list = all.filter((p) => (!st || p.state === st) && `${p.name} ${p.city} ${p.state}`.toLowerCase().includes(q));
+    if (here) list = list.filter((p) => p.lat != null).sort((a, b) => km(a) - km(b));
+    else if (sort === 'reps') list.sort((a, b) => b.members - a.members || b.crewScore - a.crewScore);
+    else if (sort === 'score') list.sort((a, b) => b.crewScore - a.crewScore);
+    $('#plist').innerHTML = list.map((p) => here ? parkCard(p).replace('</a>', `<div class="mute small">${Math.round(km(p))} km away</div></a>`) : parkCard(p)).join('') || '<p class="mute">No matches.</p>';
+  };
+  ['q', 'st', 'sort'].forEach((id) => $('#' + id).addEventListener('input', () => { here = null; draw(); }));
+  $('#near').onclick = () => navigator.geolocation
+    ? navigator.geolocation.getCurrentPosition((pos) => { here = { lat: pos.coords.latitude, lng: pos.coords.longitude }; draw(); }, () => toast('Location blocked — use the state filter instead'))
+    : toast('Location not available');
+  draw();
 };
 
 pages.park = async ([slug]) => {
@@ -92,13 +112,14 @@ pages.park = async ([slug]) => {
   const kid = u && u.age < 13;
   const presets = kid ? (await get('/parks/presets')).presets : [];
   let compose = '';
-  if (!u) compose = '<p class="mute"><a href="#/login">Log in</a> to join the crew.</p>';
+  if (!u) compose = '<p class="mute"><a href="#/login">Log in</a> to represent this park.</p>';
   else if (!u.social) compose = '<p class="mute">Social features unlock once a parent/guardian approves your account.</p>';
-  else if (!d.isMember) compose = '<button class="btn" id="join">Join this crew</button>';
+  else if (!d.isMember) compose = `<p>${d.representing ? `You currently represent <b>${esc(d.representing.name)}</b>.` : "You don't represent a park yet."}</p>
+    <button class="btn" id="join">Represent ${esc(p.name)}</button>`;
   else compose = (kid
     ? `<div class="chips">${presets.map((t, i) => `<button class="chip" data-preset="${i}">${esc(t)}</button>`).join('')}</div>`
     : `<form id="postform" style="max-width:none"><div class="row"><input class="grow" name="body" maxlength="200" placeholder="Say something to the crew…" required><button class="btn">Post</button></div></form>`)
-    + '<p class="small"><a href="#" id="leave" class="mute">Leave crew</a></p>';
+    + '<p class="small"><a href="#" id="leave" class="mute">Stop representing this park</a></p>';
   return `<p><a href="#/parks">← All parks</a></p>
     <div class="row"><h1 class="grow">${esc(p.name)}</h1>${pill(p.status)}</div>
     <p class="mute">${esc(p.city)}, ${esc(p.state)}${p.visitDate ? ' · developer visit ' + esc(when(p.visitDate)) : ''}</p>
@@ -107,8 +128,8 @@ pages.park = async ([slug]) => {
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
       <section class="card"><h3>Park leaderboard</h3>${d.leaderboard.length ? `<div class="tablewrap"><table><tr><th>#</th><th>Rider</th><th>Best score</th><th>Best combo</th></tr>
         ${d.leaderboard.map((r, i) => `<tr><td>${i + 1}</td><td><a href="#/u/${esc(r.username)}">${esc(r.username)}</a></td><td>${fmt(r.bestScore)}</td><td>${fmt(r.bestCombo)}</td></tr>`).join('')}</table></div>` : '<p class="mute">No scores yet — be the first.</p>'}</section>
-      <section class="card"><h3>The crew <span class="mute small">(${d.crew.length})</span></h3>${d.crew.length ? d.crew.map((c) =>
-        `<div><span class="dot ${c.online ? '' : 'off'}"></span><a href="#/u/${esc(c.username)}">${esc(c.username)}</a> <span class="mute small">Lv ${c.level}${c.online ? ' · here now' : ''}</span></div>`).join('') : '<p class="mute">Nobody yet.</p>'}</section>
+      <section class="card"><h3>Riders representing <span class="mute small">(${d.crew.length})</span></h3>${d.crew.length ? d.crew.map((c) =>
+        `<div><span class="dot ${c.online ? '' : 'off'}"></span><a href="#/u/${esc(c.username)}">${esc(c.username)}</a> <span class="mute small">Lv ${c.level} · ${fmt(c.bestScore)} pts${c.online ? ' · skating now' : ''}</span></div>`).join('') : '<p class="mute">Nobody yet.</p>'}</section>
     </div>
     <section class="card" style="margin-top:14px"><h3>Park board</h3>${compose}
       <div id="posts">${d.posts.map((m) => `<div class="post"><a href="#/u/${esc(m.username)}"><b>${esc(m.username)}</b></a> <span class="mute small">${esc(when(m.createdAt))}</span><br>${esc(m.body)}
@@ -117,7 +138,7 @@ pages.park = async ([slug]) => {
 pages.park.after = ([slug]) => {
   const p = `/parks/${encodeURIComponent(slug)}`;
   const run = (fn) => async (e) => { e.preventDefault(); try { await fn(e); route(); } catch (x) { toast(x.message); } };
-  $('#join')?.addEventListener('click', run(() => post(`${p}/join`)));
+  $('#join')?.addEventListener('click', run(async () => { await post(`${p}/join`); toast("You're representing this park!"); }));
   $('#leave')?.addEventListener('click', run(() => del(`${p}/join`)));
   $('#postform')?.addEventListener('submit', run((e) => post(`${p}/posts`, { body: new FormData(e.target).get('body') })));
   document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', run(() => post(`${p}/posts`, { preset: +b.dataset.preset }))));
@@ -128,7 +149,7 @@ pages.tour = async () => {
   const [{ parks }, { requests }] = await Promise.all([get('/parks'), get('/requests')]);
   const up = parks.filter((p) => p.status === 'scheduled').sort((a, b) => (a.visitDate || '').localeCompare(b.visitDate || ''));
   const u = state.user;
-  return `<h1>The tour</h1><p class="mute">We're driving around visiting parks. Here's where we're headed — and where you want us next.</p>
+  return `<h1>The tour</h1><p class="mute">Where we're headed to scan next — and where riders want us to go. Vote for your park.</p>
     <h2>Scheduled visits</h2><div class="grid">${up.map(parkCard).join('') || '<p class="mute">Nothing scheduled yet.</p>'}</div>
     <h2 style="margin-top:28px">Park requests</h2>
     ${u?.social ? `<details class="card" style="margin-bottom:14px"><summary><b>Request a park</b></summary><form id="reqform" style="margin-top:12px">
@@ -191,7 +212,9 @@ pages.login.after = () => $('#f').addEventListener('submit', async (e) => {
 
 pages.register = () => `<h1>Create your account</h1>
   <p class="mute">Pick a nickname — please don't use your real name. We only ask for birth year so we can keep younger players safe.</p>
-  <form id="f"><label>Username<input name="username" autocomplete="username" pattern="[A-Za-z0-9_]{3,20}" required></label>
+  <form id="f"><label>Game code<input name="signupCode" placeholder="XXXXXX-XXXXXX-XXXXXX" autocomplete="off" required></label>
+  <p class="mute small" style="margin:-6px 0 0">Comes with the game from the ${esc(state.cfg.studioName)} launcher. Players only.</p>
+  <label>Username<input name="username" autocomplete="username" pattern="[A-Za-z0-9_]{3,20}" required></label>
   <label>Password (8+ characters)<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
   <label>Birth year<input name="birthYear" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
   <label id="pe" hidden>Parent/guardian email<input type="email" name="parentEmail"></label>
@@ -199,6 +222,7 @@ pages.register = () => `<h1>Create your account</h1>
   <p class="mute small">Players under 13 need a parent or guardian to approve. See <a href="#/safety">Safety &amp; privacy</a>.</p>`;
 pages.register.after = () => {
   const f = $('#f');
+  const pre = new URLSearchParams((location.hash.split('?')[1] || '')).get('code'); if (pre) f.signupCode.value = pre;
   f.birthYear.addEventListener('input', () => {
     const y = +f.birthYear.value, kid = y > 1900 && new Date().getFullYear() - y < 13;
     $('#pe').hidden = !kid; f.parentEmail.required = kid;
@@ -220,6 +244,9 @@ pages.consent = async ([token]) => {
 pages.consent.after = ([token]) => $('#ok')?.addEventListener('click', async () => { await post(`/consent/${encodeURIComponent(token)}`); app.innerHTML = '<h1>Approved ✅</h1><p>Thank you. Your child can now use social features.</p>'; });
 
 pages.play = async () => {
+  if (!state.cfg.hostBuilds) return `<h1>Get the game</h1><p class="mute">${esc(state.cfg.gameName)} is distributed through the ${esc(state.cfg.studioName)} launcher.</p>
+    ${state.cfg.launcherUrl ? `<p><a class="btn" href="${esc(state.cfg.launcherUrl)}" rel="noopener">Open the launcher page</a></p>` : ''}
+    <p class="mute">After you get the game you'll receive a code to <a href="#/register">create your crew account</a>.</p>`;
   const ua = navigator.userAgent, plat = /Android/.test(ua) ? 'android' : /iPhone|iPad/.test(ua) ? 'ios' : /Mac/.test(ua) ? 'mac' : /Linux/.test(ua) ? 'linux' : 'win64';
   const platforms = ['win64', 'mac', 'linux', 'android', 'ios'];
   const ms = await Promise.all(platforms.map((p) => get(`/launcher/manifest?kind=launcher&platform=${p}`).then((r) => [p, r.build])));
@@ -244,18 +271,19 @@ pages.safety = () => `<h1>Safety &amp; privacy</h1>
   <li><b>Under 13?</b> A parent or guardian approves the account. Younger players send pre-written phrases only, never free text.</li>
   <li><b>Reporting.</b> Every board message has a report link. Reported messages are hidden quickly and reviewed by a human.</li>
   <li><b>Your data.</b> We store your username, birth year, game stats and (for under-13s) a parent email. You or a parent can delete the account and all data any time from the profile page.</li>
-  <li><b>No ads, no selling data.</b></li></ul>
+  <li><b>Players only.</b> Accounts need a code that comes with the game, so everyone here is a real player.</li><li><b>No ads, no selling data.</b></li></ul>
   <p class="small mute">This page is a plain-language summary; replace it with your final privacy policy and terms before launch.</p></div>`;
 
 // ---------- admin ----------
 pages.admin = async () => {
   if (state.user?.role !== 'admin') return '<h1>Admins only</h1>';
-  const tab = sessionStorage.getItem('atab') || 'builds';
-  const tabs = ['builds', 'parks', 'licenses', 'moderation', 'users'];
+  const tab = sessionStorage.getItem('atab') || 'parks';
+  const tabs = [...(state.cfg.hostBuilds ? ['builds'] : []), 'parks', 'licenses', 'moderation', 'users'];
   return `<h1>Admin</h1><div class="tabs">${tabs.map((t) => `<button data-tab="${t}" class="${t === tab ? 'on' : ''}">${t}</button>`).join('')}</div><div id="tabbody">Loading…</div>`;
 };
 pages.admin.after = () => {
-  const tab = sessionStorage.getItem('atab') || 'builds';
+  let tab = sessionStorage.getItem('atab') || 'parks';
+  if (tab === 'builds' && !state.cfg.hostBuilds) tab = 'parks';
   document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { sessionStorage.setItem('atab', b.dataset.tab); route(); }));
   adminTabs[tab]($('#tabbody')).catch((e) => { $('#tabbody').textContent = e.message; });
 };
@@ -350,7 +378,7 @@ const adminTabs = {
 function redirect(h) { location.hash = h; return ''; }
 async function route() {
   renderNav();
-  const parts = (location.hash.slice(2) || '').split('/').map(decodeURIComponent);
+  const parts = (location.hash.slice(2).split('?')[0] || '').split('/').map(decodeURIComponent);
   const [name, ...args] = parts;
   let key = name || 'home';
   if (key === 'parks' && args.length) key = 'park';

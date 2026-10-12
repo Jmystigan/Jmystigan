@@ -7,6 +7,9 @@ import path from 'node:path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skate-test-'));
 process.env.DATA_DIR = dir;
 process.env.ADMIN_USERNAME = 'boss';
+process.env.HOST_BUILDS = '1';
+process.env.REGISTER_PER_HOUR = '1000';
+process.env.LAUNCHER_API_KEY = 'partner-secret';
 const { app } = await import('../server/index.js');
 let server, base;
 before(() => new Promise((ok) => { server = app.listen(0, () => { base = `http://127.0.0.1:${server.address().port}/api`; ok(); }); }));
@@ -16,18 +19,40 @@ const call = async (method, url, body, token) => {
   const r = await fetch(base + url, { method, headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) }, body: body && JSON.stringify(body) });
   return { status: r.status, body: await r.json().catch(() => null) };
 };
-const reg = (username, birthYear = 2000, extra = {}) => call('POST', '/auth/register', { username, password: 'password123', birthYear, ...extra });
+let adminToken;
+const mint = async () => (await call('POST', '/admin/licenses', { count: 1 }, adminToken)).body.keys[0];
+// Signup needs a game code; the bootstrap admin ('boss') is exempt.
+const reg = async (username, birthYear = 2000, extra = {}) =>
+  call('POST', '/auth/register', { username, password: 'password123', birthYear, signupCode: username === 'boss' ? undefined : await mint(), ...extra });
 
 let admin, teen, kid, parkSlug;
 
 test('register/login, admin bootstrap, validation', async () => {
   admin = (await reg('boss')).body;
   assert.equal(admin.user.role, 'admin');
+  adminToken = admin.token;
   assert.equal((await reg('x')).status, 400);
   assert.equal((await reg('boss')).status, 409);
   assert.equal((await call('POST', '/auth/login', { username: 'boss', password: 'nope' })).status, 401);
   teen = (await reg('shredder', new Date().getFullYear() - 15)).body;
   assert.equal(teen.user.social, true);
+});
+
+test('signup is customers-only: code required, single-use, partner API mints codes', async () => {
+  const body = { username: 'nocode1', password: 'password123', birthYear: 2000 };
+  assert.equal((await call('POST', '/auth/register', body)).status, 403);
+  assert.equal((await call('POST', '/auth/register', { ...body, signupCode: 'AAAAAA-BBBBBB-CCCCCC' })).status, 403);
+  const used = await mint();
+  assert.equal((await call('POST', '/auth/register', { ...body, signupCode: used.toLowerCase() })).status, 201); // case-insensitive
+  assert.equal((await call('POST', '/auth/register', { ...body, username: 'nocode2', signupCode: used })).status, 409);
+  // partner API (your launcher backend)
+  const hdr = (k) => ({ method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${k}` }, body: JSON.stringify({ externalId: 'cust-42' }) });
+  assert.equal((await fetch(`${base}/partner/codes`, hdr('wrong'))).status, 401);
+  const a = await (await fetch(`${base}/partner/codes`, hdr('partner-secret'))).json();
+  const b = await (await fetch(`${base}/partner/codes`, hdr('partner-secret'))).json();
+  assert.equal(a.code, b.code); // idempotent per customer
+  assert.equal((await call('POST', '/auth/register', { ...body, username: 'nocode3', signupCode: a.code })).status, 201);
+  assert.equal((await (await fetch(`${base}/partner/codes`, hdr('partner-secret'))).json()).registered, true);
 });
 
 test('under-13 needs parent email and is locked from social until approved', async () => {
@@ -84,6 +109,21 @@ test('park social: join required, filters, presets for kids, reports auto-hide',
   assert.equal((await call('GET', `/parks/${parkSlug}`)).body.posts.some((p) => p.id === id), false);
 });
 
+test('represent exactly one park; in-game check-in is presence only', async () => {
+  const p2 = (await call('POST', '/admin/parks', { name: 'Second Park', city: 'Dallas', state: 'TX', status: 'in_game' }, admin.token)).body.slug;
+  await call('POST', `/parks/${p2}/join`, null, teen.token); // switches from the first
+  const me = (await call('GET', '/players/shredder')).body;
+  assert.equal(me.homePark.slug, p2);
+  assert.equal((await call('GET', `/parks/${parkSlug}`, null, teen.token)).body.isMember, false);
+  assert.equal((await call('POST', '/game/checkin', { park: parkSlug }, teen.token)).status, 200);
+  assert.equal((await call('GET', '/players/shredder')).body.homePark.slug, p2); // unchanged by check-in
+  const list = (await call('GET', '/parks')).body.parks;
+  assert.equal(list.find((p) => p.slug === parkSlug).onlineNow, 1); // present, though not representing
+  assert.equal(list.find((p) => p.slug === p2).members, 1);
+  assert.equal((await call('GET', `/parks/${parkSlug}`)).body.crew.every((c) => c.username !== 'shredder'), true);
+  await call('POST', `/parks/${parkSlug}/join`, null, teen.token); // restore for later tests
+});
+
 test('launcher: upload, publish, manifest, license-gated download, game token scope', async () => {
   const fd = new FormData();
   Object.entries({ kind: 'game', channel: 'stable', platform: 'win64', version: '1.0.0', notes: 'first' }).forEach(([k, v]) => fd.append(k, v));
@@ -98,7 +138,11 @@ test('launcher: upload, publish, manifest, license-gated download, game token sc
 
   const dl = (tok) => fetch(`${base}/launcher/download/${id}`, { headers: tok ? { authorization: `Bearer ${tok}` } : {} });
   assert.equal((await dl()).status, 401);
-  assert.equal((await dl(teen.token)).status, 403); // no license
+  const { db } = await import('../server/db.js');
+  const { signToken } = await import('../server/auth.js');
+  const legacy = db.prepare("INSERT INTO users (username, pass_hash, birth_year, consent_status) VALUES ('nolicense','x',2000,'not_required')").run();
+  const legacyTok = signToken({ id: Number(legacy.lastInsertRowid) });
+  assert.equal((await dl(legacyTok)).status, 403); // account without a license can't download
   const key = (await call('POST', '/admin/licenses', { count: 1 }, admin.token)).body.keys[0];
   assert.equal((await call('POST', '/licenses/redeem', { key }, teen.token)).status, 200);
   assert.equal((await call('POST', '/licenses/redeem', { key }, kid.token)).status, 409); // already used

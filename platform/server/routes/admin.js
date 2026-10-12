@@ -9,6 +9,7 @@ import { requireAdmin } from '../auth.js';
 
 export const router = Router();
 router.use('/admin', requireAdmin);
+router.use('/admin/builds', (_req, res, next) => (config.hostBuilds ? next() : res.status(404).json({ error: 'Build hosting is off (set HOST_BUILDS=1)' })));
 fs.mkdirSync(config.buildsDir, { recursive: true });
 
 const upload = multer({

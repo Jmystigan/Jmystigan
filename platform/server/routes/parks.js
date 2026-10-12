@@ -1,16 +1,18 @@
 import { Router } from 'express';
-import { db } from '../db.js';
+import { db, tx } from '../db.js';
 import { config } from '../config.js';
 import { requireWeb, requireSocial, rateLimit, ageOf } from '../auth.js';
 import { PRESETS, checkText } from '../moderation.js';
 
 export const router = Router();
-const online = `datetime('now', '-${config.presenceMinutes} minutes')`;
+const recent = `datetime('now', '-${config.presenceMinutes} minutes')`;
 
 router.get('/parks', (_req, res) => {
   const parks = db.prepare(`SELECT p.slug, p.name, p.city, p.state, p.lat, p.lng, p.status, p.visit_date AS visitDate, p.description,
-      (SELECT COUNT(*) FROM park_members m WHERE m.park_id = p.id) AS members,
-      (SELECT COUNT(*) FROM park_members m WHERE m.park_id = p.id AND m.last_seen >= ${online}) AS onlineNow
+      (SELECT COUNT(*) FROM park_members m JOIN users u ON u.id = m.user_id WHERE m.park_id = p.id AND u.banned = 0 AND u.consent_status != 'pending') AS members,
+      (SELECT COALESCE(SUM(pl.best_score), 0) FROM park_members m JOIN players pl ON pl.user_id = m.user_id JOIN users u ON u.id = m.user_id
+         WHERE m.park_id = p.id AND u.banned = 0 AND u.consent_status != 'pending') AS crewScore,
+      (SELECT COUNT(*) FROM park_presence s WHERE s.park_id = p.id AND s.last_seen >= ${recent}) AS onlineNow
     FROM parks p ORDER BY CASE p.status WHEN 'in_game' THEN 0 WHEN 'scanned' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END, p.state, p.name`).all();
   res.json({ parks });
 });
@@ -23,20 +25,26 @@ router.get('/parks/:slug', (req, res) => {
   const visible = "u.banned = 0 AND u.consent_status != 'pending'";
   const leaderboard = db.prepare(`SELECT u.username, ps.best_score AS bestScore, ps.best_combo AS bestCombo FROM park_scores ps
     JOIN users u ON u.id = ps.user_id WHERE ps.park_id = ? AND ${visible} ORDER BY ps.best_score DESC LIMIT 20`).all(p.id);
-  const crew = db.prepare(`SELECT u.username, pl.level, (m.last_seen >= ${online}) AS online FROM park_members m
-    JOIN users u ON u.id = m.user_id JOIN players pl ON pl.user_id = u.id
-    WHERE m.park_id = ? AND ${visible} ORDER BY online DESC, m.last_seen DESC LIMIT 50`).all(p.id);
+  const crew = db.prepare(`SELECT u.username, pl.level, pl.best_score AS bestScore,
+      EXISTS (SELECT 1 FROM park_presence s WHERE s.user_id = u.id AND s.park_id = m.park_id AND s.last_seen >= ${recent}) AS online
+    FROM park_members m JOIN users u ON u.id = m.user_id JOIN players pl ON pl.user_id = u.id
+    WHERE m.park_id = ? AND ${visible} ORDER BY online DESC, pl.best_score DESC LIMIT 100`).all(p.id);
   const posts = db.prepare(`SELECT po.id, u.username, po.body, po.created_at AS createdAt FROM posts po
     JOIN users u ON u.id = po.user_id WHERE po.park_id = ? AND po.hidden = 0 AND ${visible} ORDER BY po.id DESC LIMIT 50`).all(p.id);
   const isMember = req.user ? !!db.prepare('SELECT 1 FROM park_members WHERE user_id = ? AND park_id = ?').get(req.user.id, p.id) : false;
+  const mineRow = req.user ? db.prepare('SELECT pk.slug, pk.name FROM park_members m JOIN parks pk ON pk.id = m.park_id WHERE m.user_id = ?').get(req.user.id) : null;
   res.json({ park: { slug: p.slug, name: p.name, city: p.city, state: p.state, lat: p.lat, lng: p.lng, status: p.status, visitDate: p.visit_date, description: p.description },
-    leaderboard, crew: crew.map((c) => ({ ...c, online: !!c.online })), posts, isMember });
+    leaderboard, crew: crew.map((c) => ({ ...c, online: !!c.online })), posts, isMember, representing: mineRow ?? null });
 });
 
 router.post('/parks/:slug/join', requireWeb, requireSocial, (req, res) => {
   const p = db.prepare('SELECT id FROM parks WHERE slug = ?').get(req.params.slug);
   if (!p) return res.status(404).json({ error: 'Park not found' });
-  db.prepare('INSERT OR IGNORE INTO park_members (user_id, park_id) VALUES (?,?)').run(req.user.id, p.id);
+  // You represent exactly one park: representing a new one replaces the old.
+  tx(() => {
+    db.prepare('DELETE FROM park_members WHERE user_id = ? AND park_id != ?').run(req.user.id, p.id);
+    db.prepare('INSERT OR IGNORE INTO park_members (user_id, park_id) VALUES (?,?)').run(req.user.id, p.id);
+  });
   res.json({ ok: true });
 });
 router.delete('/parks/:slug/join', requireWeb, (req, res) => {
@@ -50,7 +58,7 @@ router.post('/parks/:slug/posts', requireWeb, requireSocial, rateLimit('post', 6
   const p = db.prepare('SELECT id FROM parks WHERE slug = ?').get(req.params.slug);
   if (!p) return res.status(404).json({ error: 'Park not found' });
   const member = db.prepare('SELECT 1 FROM park_members WHERE user_id = ? AND park_id = ?').get(req.user.id, p.id);
-  if (!member) return res.status(403).json({ error: 'Join the park crew to post' });
+  if (!member) return res.status(403).json({ error: 'Represent this park to post on its board' });
   let body;
   if (ageOf(req.user) < 13) {
     body = PRESETS[Number(req.body?.preset)];

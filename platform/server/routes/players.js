@@ -9,8 +9,7 @@ export function profileOf(u, viewerId) {
   const tricks = db.prepare('SELECT name, landed, best_score AS bestScore FROM tricks WHERE user_id = ? ORDER BY best_score DESC, landed DESC').all(u.id);
   const parks = db.prepare(`SELECT pk.slug, pk.name, pk.city, pk.state, ps.best_score AS bestScore, ps.best_combo AS bestCombo
     FROM park_scores ps JOIN parks pk ON pk.id = ps.park_id WHERE ps.user_id = ? ORDER BY ps.best_score DESC`).all(u.id);
-  const home = db.prepare(`SELECT pk.slug, pk.name FROM park_members m JOIN parks pk ON pk.id = m.park_id
-    WHERE m.user_id = ? ORDER BY m.last_seen DESC LIMIT 1`).get(u.id);
+  const home = db.prepare('SELECT pk.slug, pk.name FROM park_members m JOIN parks pk ON pk.id = m.park_id WHERE m.user_id = ?').get(u.id);
   const followers = db.prepare('SELECT COUNT(*) c FROM follows WHERE followee_id = ?').get(u.id).c;
   const following = viewerId ? !!db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(viewerId, u.id) : false;
   return {

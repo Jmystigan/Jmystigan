@@ -9,7 +9,13 @@
 - `launcher/` Electron shell (needs `npm i`, a real unzip step, packaging with code-signing, and the "Play" button wired to the unpacked exe).
 - `unreal/` C++ subsystem (never compiled — expect small fixes for your module name / UE version).
 
+## Product decisions
+- Customers-only: signup needs a one-time code (partner API from your launcher, admin-generated keys, or bootstrap admin).
+- One represented park per player (switching replaces). In-game check-in is presence only.
+- Build hosting/launcher are optional (`HOST_BUILDS=1`); your own launcher is the default assumption.
+
 ## Not built yet (highest value first)
+0. **Revoking access** when a purchase is refunded (partner endpoint to disable a customer's code/account) — today you'd ban the user from Admin → users.
 1. **Email delivery** for parent consent (link currently logged to console).
 2. **Real privacy policy / ToS** + lawyer review for children's data.
 3. Launcher: unpack + launch flow, self-update application, code-signing (Windows SmartScreen/macOS notarisation).

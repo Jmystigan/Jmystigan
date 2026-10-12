@@ -4,7 +4,12 @@ import { db } from '../db.js';
 import { config } from '../config.js';
 import { signToken, requireAuth, requireWeb, rateLimit } from '../auth.js';
 
+import crypto from 'node:crypto';
+
 export const router = Router();
+
+// Build hosting is optional (HOST_BUILDS=1). By default your own launcher distributes the game.
+router.use(['/launcher', '/admin/builds'], (_req, res, next) => (config.hostBuilds ? next() : res.status(404).json({ error: 'Not found' })));
 
 const buildJson = (b) => ({ id: b.id, kind: b.kind, channel: b.channel, platform: b.platform, version: b.version,
   filename: b.filename, size: b.size, sha256: b.sha256, notes: b.notes, createdAt: b.created_at });
@@ -12,7 +17,22 @@ const buildJson = (b) => ({ id: b.id, kind: b.kind, channel: b.channel, platform
 export const ownsGame = (u) => u.role === 'admin' || !!db.prepare('SELECT 1 FROM licenses WHERE user_id = ?').get(u.id);
 
 // Branding for launcher + web: studio name is config so a rename never needs a rebuild.
-router.get('/config', (_req, res) => res.json({ studioName: config.studioName, gameName: config.gameName }));
+router.get('/config', (_req, res) => res.json({ studioName: config.studioName, gameName: config.gameName, launcherUrl: config.launcherUrl, hostBuilds: config.hostBuilds }));
+
+// Server-to-server: your launcher backend calls this when someone buys/installs the game, then shows the returned
+// code to the player (or opens `${PUBLIC_URL}/#/register?code=...`). Idempotent per externalId. Auth: LAUNCHER_API_KEY.
+const sameKey = (a, b) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+router.post('/partner/codes', (req, res) => {
+  const given = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+  if (!config.partnerApiKey || !sameKey(given, config.partnerApiKey)) return res.status(401).json({ error: 'Bad or missing partner key' });
+  const ext = String(req.body?.externalId ?? '').trim().slice(0, 100);
+  if (!ext) return res.status(400).json({ error: 'externalId (your customer id) is required' });
+  const existing = db.prepare('SELECT key, user_id FROM licenses WHERE external_id = ?').get(ext);
+  if (existing) return res.json({ code: existing.key, registered: !!existing.user_id, signupUrl: `${config.publicUrl}/#/register?code=${existing.key}` });
+  const code = Array.from({ length: 3 }, () => crypto.randomBytes(3).toString('hex').toUpperCase()).join('-');
+  db.prepare('INSERT INTO licenses (key, external_id, note) VALUES (?,?,?)').run(code, ext, 'partner');
+  res.status(201).json({ code, registered: false, signupUrl: `${config.publicUrl}/#/register?code=${code}` });
+});
 
 // Latest published build per kind/channel/platform. The launcher polls this to self-update and to update the game.
 router.get('/launcher/manifest', (req, res) => {
