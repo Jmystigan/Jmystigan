@@ -6,6 +6,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-'));
 const L = new Launcher({ server, installDir: dir, version: '0.0.1' });
 assert.ok(cmpVer('1.10.0', '1.9.9') > 0 && cmpVer('1.0', '1.0.0') === 0);
 await L.login(user, pass);
+const wm = await L.world(); assert.ok(Number.isInteger(wm.revision)); assert.equal((await L.world(wm.revision)).changed, false);
+console.log('✓ world manifest: revision', wm.revision, '| released:', wm.regions.map((r) => `${r.code}@${r.version}`).join(', ') || 'none');
 console.log('✓ login; branding =', JSON.stringify(await L.branding()));
 const s = await L.gameStatus(); console.log('✓ game status', s.installed, '->', s.latest?.version);
 let last = 0; const r = await L.installGame((g, t) => { last = g / t; });

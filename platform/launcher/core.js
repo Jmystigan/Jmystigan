@@ -26,6 +26,10 @@ export class Launcher {
 
   async manifest(kind) { return (await this.#api('GET', `/api/launcher/manifest?kind=${kind}&channel=${this.o.channel}&platform=${this.o.platform}`)).build; }
 
+  /** Open-world manifest. Poll with the last revision you saw: `{changed:false}` means nothing new; otherwise it lists released
+   *  states (code, name, version) and in-game parks. When a new state appears, prompt the player to update the game. */
+  world(sinceRevision) { return this.#api('GET', `/api/world/manifest${sinceRevision != null ? `?since=${sinceRevision}` : ''}`); }
+
   /** Is a newer launcher published? (Compare as dotted numbers; the shell decides how to apply it.) */
   async launcherUpdate() {
     const b = await this.manifest('launcher');

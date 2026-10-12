@@ -1,1 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#111418"/><rect x="96" y="214" width="320" height="64" rx="32" fill="#ff7a1a"/><circle cx="170" cy="340" r="34" fill="#f4f4f5"/><circle cx="342" cy="340" r="34" fill="#f4f4f5"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#1d0f1b"/>
+<circle cx="256" cy="256" r="214" fill="#c4492a" stroke="#f2b84b" stroke-width="14"/>
+<polygon points="256,86 296,196 414,200 322,272 354,386 256,320 158,386 190,272 98,200 216,196" fill="#f2b84b" stroke="#2b1810" stroke-width="10" stroke-linejoin="round"/>
+<rect x="150" y="392" width="212" height="34" rx="17" fill="#2b1810"/><circle cx="196" cy="438" r="16" fill="#f0dfba" stroke="#2b1810" stroke-width="6"/><circle cx="316" cy="438" r="16" fill="#f0dfba" stroke="#2b1810" stroke-width="6"/></svg>

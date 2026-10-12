@@ -1,6 +1,6 @@
 // Minimal offline shell: cache static assets, always go to network for the API.
-const CACHE = 'shell-v1';
-const SHELL = ['/', '/style.css', '/app.js', '/icon.svg'];
+const CACHE = 'shell-v2';
+const SHELL = ['/', '/style.css', '/app.js', '/util.js', '/map.js', '/poster.js', '/us-states.json', '/img/hero.svg', '/icon.svg'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', (e) => e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', (e) => {

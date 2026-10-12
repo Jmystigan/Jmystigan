@@ -4,7 +4,7 @@ import { requireAuth, requirePartner } from '../auth.js';
 import { getRevision, releaseRegion } from '../world.js';
 import { listParks } from './parks.js';
 import { SPOT_SELECT, spotJson } from './spots.js';
-import { distanceM, project } from '../geo.js';
+import { distanceM, project, unproject, stateAt } from '../geo.js';
 
 export const router = Router();
 
@@ -18,7 +18,7 @@ router.get('/world', (req, res) => {
   res.json({
     revision: getRevision(), regions: regionRows(), parks: listParks(), news: newsRows(),
     spots: db.prepare(`${SPOT_SELECT} WHERE s.status IN ('approved','planned') ORDER BY votes DESC LIMIT 500`).all(0).map((r) => {
-      const j = spotJson(r, null); return { id: j.id, name: j.name, x: j.x, y: j.y, votes: j.votes, status: j.status, tags: j.tags };
+      const j = spotJson(r, null); return { id: j.id, name: j.name, x: j.x, y: j.y, state: j.state, votes: j.votes, status: j.status, tags: j.tags };
     }),
   });
 });
@@ -52,5 +52,17 @@ router.get('/feed', requireAuth, (req, res) => {
 // Your launcher's build pipeline calls this when a new state ships, so the site, map and news update by themselves.
 router.post('/partner/regions/:code/release', requirePartner, (req, res) => {
   try { res.json({ ok: true, ...releaseRegion(String(req.params.code).toUpperCase(), req.body ?? {}) }); }
-  catch (e) { res.status(e.status ?? 500).json({ error: e.message }); }
+  catch (e) { res.status(e.status ?? 500).json({ error: e.message, needsForce: !!e.needsForce }); }
+});
+
+// Helpers for the map UI (tap the map -> coordinates + state; GPS/pasted coordinates -> where to draw the marker).
+router.get('/geo/project', (req, res) => {
+  const xy = project(Number(req.query.lat), Number(req.query.lng)), state = xy ? stateAt(xy[0], xy[1]) : null;
+  if (!state) return res.status(400).json({ error: 'That location is not on US land (the map covers the 50 states + DC)' });
+  res.json({ x: xy[0], y: xy[1], state });
+});
+router.get('/geo/unproject', (req, res) => {
+  const ll = unproject(Number(req.query.x), Number(req.query.y)), xy = ll ? project(ll.lat, ll.lng) : null, state = xy ? stateAt(xy[0], xy[1]) : null;
+  if (!state) return res.status(400).json({ error: 'Tap on US land' });
+  res.json({ ...ll, state });
 });

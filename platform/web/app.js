@@ -1,28 +1,8 @@
 // Single-page app, no build step. All dynamic text goes through esc() — never interpolate raw.
-const $ = (s, r = document) => r.querySelector(s);
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+import { $, esc, state, api, get, post, del, toast, setSession, fmt, bytes, STATUS, pill, when, loadWorld } from './util.js';
+import { mapPage, previewMap } from './map.js';
+import { posterSvg, downloadPoster } from './poster.js';
 const app = $('#app');
-const state = { cfg: { studioName: 'Studio', gameName: 'Game' }, token: null, user: null };
-try { state.token = localStorage.getItem('token'); } catch {}
-
-async function api(method, url, body) {
-  const r = await fetch('/api' + url, {
-    method, headers: { ...(body && { 'content-type': 'application/json' }), ...(state.token && { authorization: `Bearer ${state.token}` }) },
-    body: body && JSON.stringify(body),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(data.error || 'Request failed'), { status: r.status });
-  return data;
-}
-const get = (u) => api('GET', u), post = (u, b) => api('POST', u, b ?? {}), del = (u) => api('DELETE', u);
-
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2800); }
-function setSession(token) { state.token = token; try { token ? localStorage.setItem('token', token) : localStorage.removeItem('token'); } catch {} }
-const fmt = (n) => Number(n).toLocaleString();
-const bytes = (n) => n > 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n > 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.ceil(n / 1e3) + ' KB';
-const STATUS = { in_game: 'In the game', scanned: 'Scanned', scheduled: 'Visit scheduled', planned: 'Planned' };
-const pill = (s) => `<span class="pill ${esc(s)}">${esc(STATUS[s] ?? s)}</span>`;
-const when = (d) => d ? new Date(d.length === 10 ? d + 'T12:00:00' : d.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
 async function refreshUser() {
   state.user = null;
@@ -32,7 +12,8 @@ async function refreshUser() {
 function renderNav() {
   const u = state.user, h = location.hash || '#/';
   const l = (href, text) => `<a href="${href}" class="${h === href || (href !== '#/' && h.startsWith(href)) ? 'on' : ''}">${text}</a>`;
-  $('#nav').innerHTML = [l('#/parks', 'Parks'), l('#/tour', 'Tour'), (state.cfg.hostBuilds || state.cfg.launcherUrl || state.cfg.canBuy) ? l('#/play', 'Get the game') : '',
+  $('#nav').innerHTML = [l('#/map', 'Map'), l('#/parks', 'Parks'), l('#/spots', 'Spots'), u ? l('#/feed', 'Crew') : '',
+    (state.cfg.hostBuilds || state.cfg.launcherUrl || state.cfg.canBuy) ? l('#/play', 'Get the game') : '',
     u ? l('#/me', esc(u.username)) : l('#/login', 'Log in'),
     u?.role === 'admin' ? l('#/admin', 'Admin') : '',
     u ? '<a href="#/logout">Log out</a>' : '<a class="btn sm" href="#/register">Sign up</a>'].join('');
@@ -43,27 +24,37 @@ $('#burger').onclick = () => { const n = $('#nav'); const o = n.classList.toggle
 const pages = {};
 
 pages.home = async () => {
-  const { parks } = await get('/parks');
-  const reps = parks.reduce((n, p) => n + p.members, 0);
+  const world = await loadWorld(true);
+  const parks = world.parks, reps = parks.reduce((n, p) => n + p.members, 0);
   const top = [...parks].sort((a, b) => b.members - a.members || b.crewScore - a.crewScore).slice(0, 6);
+  const open = world.regions.filter((r) => r.status === 'released').length;
   return `
-  <section class="hero">
-    <h1>Represent your park.</h1>
-    <p>The crew app for <b>${esc(state.cfg.gameName)}</b> players. Claim your local skatepark, see who else in your area rides it,
-       and show off your level, tricks and best scores. Players-only — you sign up with the code that comes with the game from ${esc(state.cfg.studioName)}.</p>
-    <div class="row">${state.cfg.canBuy ? '<a class="btn" href="#/play">Get the game</a><a class="btn ghost" href="#/register">I have a code</a>' : '<a class="btn" href="#/register">Sign up with your game code</a>'}<a class="btn ghost" href="#/parks">Find my park</a><a class="btn ghost" href="#/tour">Request a park</a></div>
+  <section class="hero-art"><div class="hero-in">
+    <div class="kicker">★ ${esc(state.cfg.studioName)} presents ★</div>
+    <h1>${esc(state.cfg.gameName)}</h1></div>
+    <div class="hero-cta row">${state.cfg.canBuy ? '<a class="btn" href="#/play">Get the game</a><a class="btn ghost" href="#/register">I have a code</a>' : '<a class="btn" href="#/register">Sign up with your game code</a>'}<a class="btn ghost" href="#/map">Open the map</a></div>
   </section>
-  <h2>How it works</h2>
+  <p class="lead">An open-world skate game built from <b>real skateparks</b>, state by state. Rep your local park, find your crew, and put your name on the board.
+     Players only — you sign up with the code that comes with the game.</p>
+  <div class="rope"></div>
+  <div class="mapgrid" style="grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)">
+    <div><div class="mapwrap" id="homemap" style="cursor:pointer" title="Open the map"></div></div>
+    <div class="card"><h2>The open world</h2><p><b>${open}</b> state${open === 1 ? '' : 's'} open · <b>${parks.length}</b> parks mapped · <b>${reps}</b> rider${reps === 1 ? '' : 's'} repping.</p>
+      <h3>Latest from the frontier</h3>${world.news.slice(0, 4).map((n) => `<div class="newsitem"><b>${esc(n.title)}</b><div class="small mute">${esc(n.body)}</div></div>`).join('') || '<p class="mute small">The first state is on its way.</p>'}
+      <p><a class="btn sm" href="#/map">Explore the map</a></p></div>
+  </div>
+  <h2 style="margin-top:30px">How it works</h2>
   <ol class="steps">
     <li><h3>Get the game</h3>Install ${esc(state.cfg.gameName)} from the ${esc(state.cfg.studioName)} launcher. You'll get a code to unlock your account here.</li>
     <li><h3>Pick your park</h3>Choose the skatepark you rep. One park per rider — switch any time.</li>
-    <li><h3>Meet your crew</h3>See locals, who's online, and trade quick messages on your park's board.</li>
-    <li><h3>Rep it</h3>Your level, tricks and bests show on your profile. Parks compete for the most riders and the biggest crew score.</li>
+    <li><h3>Meet your crew</h3>Find locals on the map, see who's skating now, and trade quick messages on your park's board.</li>
+    <li><h3>Find new spots</h3>Know a spot we're missing? Drop a pin (and photos, if you're 13+). The developer may visit and scan it into the game.</li>
   </ol>
-  <h2 style="margin-top:28px">Top parks</h2>
-  <p class="mute">${reps} rider${reps === 1 ? '' : 's'} representing across ${parks.length} park${parks.length === 1 ? '' : 's'}. Your park not here? <a href="#/tour">Request it.</a></p>
+  <h2 style="margin-top:30px">Top parks</h2>
+  <p class="mute">Your park not here? <a href="#/map?submit=1">Drop a pin</a> and put it on the map.</p>
   <div class="grid">${top.map(parkCard).join('') || '<p class="mute">The first parks are coming soon.</p>'}</div>`;
 };
+pages.home.after = () => previewMap($('#homemap')).then(() => { $('#homemap').onclick = () => { location.hash = '#/map'; }; });
 
 function parkCard(p) {
   return `<a class="card" href="#/parks/${esc(p.slug)}" style="display:block;color:inherit;text-decoration:none">
@@ -134,7 +125,7 @@ pages.park = async ([slug]) => {
     </div>
     <section class="card" style="margin-top:14px"><h3>Park board</h3>${compose}
       <div id="posts">${d.posts.map((m) => `<div class="post">${m.username ? `<a href="#/u/${esc(m.username)}"><b>${esc(m.username)}</b></a>` : '<b>A rider</b>'} <span class="mute small">${esc(when(m.createdAt))}</span><br>${esc(m.body)}
-        ${u && u.social ? ` <a href="#" class="small mute" data-report="${m.id}">report</a>` : ''}</div>`).join('') || '<p class="mute">Quiet so far.</p>'}</div></section>`;
+        ${u?.social ? ` <button class="chip" data-respect="${m.id}" data-on="${m.respected ? 1 : 0}" style="min-height:28px;padding:2px 10px">🤙 ${m.respects}</button> <a href="#" class="small mute" data-report="${m.id}">report</a>` : `<span class="small mute">🤙 ${m.respects}</span>`}</div>`).join('') || '<p class="mute">Quiet so far.</p>'}</div></section>`;
 };
 pages.park.after = ([slug]) => {
   const p = `/parks/${encodeURIComponent(slug)}`;
@@ -143,49 +134,72 @@ pages.park.after = ([slug]) => {
   $('#leave')?.addEventListener('click', run(() => del(`${p}/join`)));
   $('#postform')?.addEventListener('submit', run((e) => post(`${p}/posts`, { body: new FormData(e.target).get('body') })));
   document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', run(() => post(`${p}/posts`, { preset: +b.dataset.preset }))));
+  document.querySelectorAll('[data-respect]').forEach((b) => b.addEventListener('click', run(() => (b.dataset.on === '1' ? del : post)(`/posts/${b.dataset.respect}/respect`))));
   document.querySelectorAll('[data-report]').forEach((a) => a.addEventListener('click', async (e) => { e.preventDefault(); try { await post(`/posts/${a.dataset.report}/report`); toast('Thanks — reported'); a.remove(); } catch (x) { toast(x.message); } }));
 };
 
-pages.tour = async () => {
-  const [{ parks }, { requests }] = await Promise.all([get('/parks'), get('/requests')]);
+pages.map = mapPage; pages.map.after = mapPage.after;
+
+pages.spots = async () => {
+  const [{ parks }, { spots }] = await Promise.all([get('/parks'), get('/spots')]);
   const up = parks.filter((p) => p.status === 'scheduled').sort((a, b) => (a.visitDate || '').localeCompare(b.visitDate || ''));
-  const u = state.user;
-  return `<h1>The tour</h1><p class="mute">Where we're headed to scan next — and where riders want us to go. Vote for your park.</p>
+  const u = state.user, PUBLIC = ['approved', 'planned', 'converted'];
+  const mine = spots.filter((s) => s.mine && !PUBLIC.includes(s.status)), pub = spots.filter((s) => PUBLIC.includes(s.status));
+  const card = (s, voting = true) => `<div class="card"><div class="row"><h3 class="grow">◆ ${esc(s.name)}</h3>${pill(s.status === 'approved' ? 'scanned' : s.status)}</div>
+    <div>${s.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>${s.description ? `<p class="small">${esc(s.description)}</p>` : ''}
+    ${s.photos.length ? `<div class="thumbs">${s.photos.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener"><img src="${esc(p)}" alt="Photo of ${esc(s.name)}" loading="lazy"></a>`).join('')}</div>` : ''}
+    <div class="row" style="margin-top:8px"><span class="small mute grow">${esc(s.state ?? '')} · found by ${s.discoveredBy ? esc(s.discoveredBy) : 'a rider'}</span>
+      ${s.parkSlug ? `<a class="btn sm" href="#/parks/${esc(s.parkSlug)}">See the park</a>` : voting ? `<button class="btn sm ${s.voted ? 'ghost' : ''}" data-vote="${s.id}" data-on="${s.voted ? 1 : 0}" ${u?.social ? '' : 'disabled'}>🤙 ${s.votes}</button>` : `<button class="btn sm danger" data-withdraw="${s.id}">Withdraw</button>`}</div></div>`;
+  return `<div class="row"><h1 class="grow">Spots &amp; the tour</h1><a class="btn" href="#/map?submit=1">📍 Found a new spot?</a></div>
+    <p class="mute">Where the developer is headed next — and the spots riders like you have found. The more votes a spot gets, the sooner it moves up the list.</p>
     <h2>Scheduled visits</h2><div class="grid">${up.map(parkCard).join('') || '<p class="mute">Nothing scheduled yet.</p>'}</div>
-    <h2 style="margin-top:28px">Park requests</h2>
-    ${u?.social ? `<details class="card" style="margin-bottom:14px"><summary><b>Request a park</b></summary><form id="reqform" style="margin-top:12px">
-      <label>Park name<input name="name" required maxlength="80"></label><label>City<input name="city" required maxlength="60"></label>
-      <label>State<input name="state" required maxlength="30"></label><label>Why this park? (optional)<input name="note" maxlength="200"></label>
-      <div class="err" id="reqerr"></div><button class="btn">Send request</button></form></details>` : '<p class="mute small">Log in to request or vote.</p>'}
-    <div class="card">${requests.map((r) => `<div class="post row"><div class="grow"><b>${esc(r.name)}</b> <span class="mute small">${esc(r.city)}, ${esc(r.state)}</span>${r.note ? `<div class="small">${esc(r.note)}</div>` : ''}</div>
-      <button class="btn sm ${r.voted ? '' : 'ghost'}" data-vote="${r.id}" data-voted="${r.voted ? 1 : 0}" ${u?.social ? '' : 'disabled'}>▲ ${r.votes}</button>
-      ${u?.role === 'admin' ? `<button class="btn sm danger" data-rdel="${r.id}">✕</button>` : ''}</div>`).join('') || '<p class="mute">No requests yet.</p>'}</div>`;
+    ${mine.length ? `<h2 style="margin-top:28px">Your submissions</h2><p class="small mute">Only you can see these until an admin approves them.</p><div class="grid">${mine.map((s) => card(s, false)).join('')}</div>` : ''}
+    <h2 style="margin-top:28px">Community spots</h2><div class="grid">${pub.map((s) => card(s)).join('') || '<p class="mute">No community spots yet — be the first.</p>'}</div>`;
 };
-pages.tour.after = () => {
-  $('#reqform')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    try { await post('/requests', Object.fromEntries(new FormData(e.target))); toast('Request sent!'); route(); } catch (x) { $('#reqerr').textContent = x.message; }
-  });
+pages.spots.after = () => {
   document.querySelectorAll('[data-vote]').forEach((b) => b.addEventListener('click', async () => {
-    try { await (b.dataset.voted === '1' ? del : post)(`/requests/${b.dataset.vote}/vote`); route(); } catch (x) { toast(x.message); }
+    try { await (b.dataset.on === '1' ? del : post)(`/spots/${b.dataset.vote}/vote`); route(); } catch (x) { toast(x.message); }
   }));
-  document.querySelectorAll('[data-rdel]').forEach((b) => b.addEventListener('click', async () => { await post(`/admin/requests/${b.dataset.rdel}/delete`); route(); }));
+  document.querySelectorAll('[data-withdraw]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Withdraw this spot?')) return;
+    try { await del(`/spots/${b.dataset.withdraw}`); route(); } catch (x) { toast(x.message); }
+  }));
+};
+pages.tour = pages.spots; // old links
+
+pages.feed = async () => {
+  if (!state.user) return redirect('#/login');
+  const f = await get('/feed');
+  return `<h1>Your crew</h1>${f.home ? `<p class="mute">You rep <a href="#/parks/${esc(f.home.slug)}"><b>${esc(f.home.name)}</b></a>.</p>` : '<div class="notice">You don\'t rep a park yet — <a href="#/map">find yours on the map</a>.</div>'}
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+      <section class="card"><h3>From the frontier</h3>${f.news.map((n) => `<div class="newsitem"><b>${esc(n.title)}</b><div class="small mute">${esc(n.body)}</div></div>`).join('') || '<p class="mute">Nothing yet.</p>'}</section>
+      <section class="card"><h3>Your park's board</h3>${f.posts.map((m) => `<div class="post">${m.username ? `<a href="#/u/${esc(m.username)}"><b>${esc(m.username)}</b></a>` : '<b>A rider</b>'} <span class="small mute">${esc(when(m.createdAt))}</span><br>${esc(m.body)} <span class="small mute">🤙 ${m.respects}</span></div>`).join('') || '<p class="mute">Quiet so far.</p>'}</section>
+      <section class="card"><h3>New spots near you</h3>${f.spots.map((s) => `<div class="post"><a href="#/map"><b>◆ ${esc(s.name)}</b></a> <span class="small mute">${s.votes} vote${s.votes === 1 ? '' : 's'}</span></div>`).join('') || '<p class="mute">Nothing nearby yet.</p>'}
+        <p><a class="btn sm" href="#/map?submit=1">📍 Add a spot</a></p></section></div>`;
 };
 
 function profileHtml(p, mine) {
   const lock = p.private && mine ? `<div class="notice">🔒 <b>Your profile is private.</b> Only you${state.user?.age < 13 ? ' and your parent' : ''} can see it. It isn't shown on leaderboards, rider lists or search, and your park posts show as “A rider”.</div>` : '';
   const next = p.level * 1000, pct = Math.min(100, Math.round(((p.xp % next) / next) * 100));
-  return `${lock}<div class="row"><h1 class="grow">${esc(p.username)}${p.private ? ' 🔒' : ''}</h1>${p.homePark ? `<a class="pill" href="#/parks/${esc(p.homePark.slug)}">🏠 ${esc(p.homePark.name)}</a>` : ''}</div>
-    <div class="row mute small"><span>Joined ${esc(when(p.joined))}</span><span>${p.followers} follower${p.followers === 1 ? '' : 's'}</span></div>
-    <div class="stats"><div class="stat"><b>${p.level}</b><span>Level</span></div><div class="stat"><b>${fmt(p.bestScore)}</b><span>Best score</span></div>
-      <div class="stat"><b>${fmt(p.bestCombo)}</b><span>Best combo</span></div><div class="stat"><b>${p.tricks.length}</b><span>Tricks known</span></div><div class="stat"><b>${p.playHours}h</b><span>Time skated</span></div></div>
-    <div class="level" title="XP progress"><i style="width:${pct}%"></i></div>
-    ${!mine && state.user?.social ? `<p><button class="btn sm ${p.following ? 'ghost' : ''}" id="follow" data-on="${p.following ? 1 : 0}">${p.following ? 'Following' : 'Follow'}</button></p>` : ''}
-    <div class="grid" style="margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
-      <section class="card"><h3>Tricks</h3>${p.tricks.length ? `<div class="tablewrap"><table><tr><th>Trick</th><th>Landed</th><th>Best</th></tr>${p.tricks.map((t) => `<tr><td>${esc(t.name)}</td><td>${fmt(t.landed)}×</td><td>${fmt(t.bestScore)}</td></tr>`).join('')}</table></div>` : '<p class="mute">No tricks recorded yet.</p>'}</section>
-      <section class="card"><h3>Park bests</h3>${p.parks.length ? p.parks.map((k) => `<div class="post"><a href="#/parks/${esc(k.slug)}">${esc(k.name)}</a><br><span class="mute small">Score ${fmt(k.bestScore)} · Combo ${fmt(k.bestCombo)}</span></div>`).join('') : '<p class="mute">Skate a park to set a best.</p>'}</section>
-    </div>`;
+  const svg = posterSvg(p); state.poster = { svg, username: p.username };
+  return `${lock}<div class="profile-grid">
+    <div><div class="poster" id="poster">${svg}</div>
+      <div class="row" style="justify-content:center;margin-top:20px"><button class="btn sm" id="dlposter">⬇ Save poster</button>${!p.private ? '<button class="btn sm ghost" id="cplink">Copy profile link</button>' : ''}</div></div>
+    <div>
+      <div class="row"><h1 class="grow">${esc(p.username)}${p.private ? ' 🔒' : ''}</h1>${p.homePark ? `<a class="pill released" href="#/parks/${esc(p.homePark.slug)}">🏠 ${esc(p.homePark.name)}</a>` : ''}</div>
+      <div class="row mute small"><span>Joined ${esc(when(p.joined))}</span><span>${p.followers} follower${p.followers === 1 ? '' : 's'}</span></div>
+      <div class="stats"><div class="stat"><b>${p.level}</b><span>Level</span></div><div class="stat"><b>${fmt(p.bestScore)}</b><span>Best score</span></div>
+        <div class="stat"><b>${fmt(p.bestCombo)}</b><span>Best combo</span></div><div class="stat"><b>${p.tricks.length}</b><span>Tricks known</span></div><div class="stat"><b>${p.playHours}h</b><span>Time skated</span></div></div>
+      <div class="level" title="XP progress"><i style="width:${pct}%"></i></div>
+      ${!mine && state.user?.social ? `<p><button class="btn sm ${p.following ? 'ghost' : ''}" id="follow" data-on="${p.following ? 1 : 0}">${p.following ? 'Following' : 'Follow'}</button></p>` : ''}
+      <section class="card" style="margin-top:14px"><h3>Wanted for</h3>${p.tricks.length ? `<div class="tablewrap"><table><tr><th>Trick</th><th>Landed</th><th>Best</th></tr>${p.tricks.map((t) => `<tr><td>${esc(t.name)}</td><td>${fmt(t.landed)}×</td><td>${fmt(t.bestScore)}</td></tr>`).join('')}</table></div>` : '<p class="mute">No tricks recorded yet.</p>'}</section>
+      <section class="card" style="margin-top:14px"><h3>Park bests</h3>${p.parks.length ? p.parks.map((k) => `<div class="post"><a href="#/parks/${esc(k.slug)}">${esc(k.name)}</a><br><span class="mute small">Score ${fmt(k.bestScore)} · Combo ${fmt(k.bestCombo)}</span></div>`).join('') : '<p class="mute">Skate a park to set a best.</p>'}</section>
+    </div></div>`;
 }
+const bindProfile = () => {
+  $('#dlposter')?.addEventListener('click', () => state.poster && downloadPoster(state.poster.svg, `wanted-${state.poster.username}.png`));
+  $('#cplink')?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(`${location.origin}/#/u/${state.poster.username}`); toast('Link copied'); } catch { toast(`${location.origin}/#/u/${state.poster.username}`); } });
+};
 pages.me = async () => {
   if (!state.user) return redirect('#/login');
   const p = await get('/me/profile'), u = state.user;
@@ -197,6 +211,7 @@ pages.me = async () => {
       <div class="row"><a class="btn ghost sm" href="#/play">Redeem a key / get the game</a><button class="btn danger sm" id="delacct">Delete my account &amp; data</button></div></section>`;
 };
 pages.me.after = () => {
+  bindProfile();
   $('#priv')?.addEventListener('change', async (e) => {
     try { await api('PATCH', '/me/settings', { profilePrivate: e.target.checked }); await refreshUser(); toast(e.target.checked ? 'Profile is now private' : 'Profile is now public'); route(); }
     catch (x) { toast(x.message); e.target.checked = !e.target.checked; }
@@ -208,9 +223,12 @@ pages.me.after = () => {
   });
 };
 pages.u = async ([name]) => profileHtml(await get(`/players/${encodeURIComponent(name)}`), false);
-pages.u.after = ([name]) => $('#follow')?.addEventListener('click', async (e) => {
-  try { await (e.target.dataset.on === '1' ? del : post)(`/players/${encodeURIComponent(name)}/follow`); route(); } catch (x) { toast(x.message); }
-});
+pages.u.after = ([name]) => {
+  bindProfile();
+  $('#follow')?.addEventListener('click', async (e) => {
+    try { await (e.target.dataset.on === '1' ? del : post)(`/players/${encodeURIComponent(name)}/follow`); route(); } catch (x) { toast(x.message); }
+  });
+};
 
 pages.login = () => `<h1>Log in</h1><form id="f"><label>Username<input name="username" autocomplete="username" required></label>
   <label>Password<input type="password" name="password" autocomplete="current-password" required></label><div class="err" id="err"></div><button class="btn">Log in</button></form>
@@ -324,19 +342,19 @@ pages.safety = () => `<h1>Safety &amp; privacy</h1>
   <li><b>Under-13 profiles are always private.</b> Their name, stats and scores are never shown to other players; their board phrases appear as “A rider”. Players 13+ can also hide their profile in account settings.</li>
   <li><b>Reporting.</b> Every board message has a report link. Reported messages are hidden quickly and reviewed by a human.</li>
   <li><b>Your data.</b> We store your username, birth year, game stats and (for under-13s) a parent email. You or a parent can delete the account and all data any time from the profile page.</li>
-  <li><b>Players only.</b> Accounts need a code that comes with the game, so everyone here is a real player.</li><li><b>No ads, no selling data.</b></li></ul>
+  <li><b>Players only.</b> Accounts need a code that comes with the game, so everyone here is a real player.</li><li><b>Spot photos.</b> Only players 13+ can upload photos, only photos of the spot (no people), every photo is reviewed before anyone else can see it, and location data is stripped from the file. Under-13s can drop a pin and pick tags, nothing more.</li><li><b>No ads, no selling data.</b></li></ul>
   <p class="small mute">This page is a plain-language summary; replace it with your final privacy policy and terms before launch.</p></div>`;
 
 // ---------- admin ----------
 pages.admin = async () => {
   if (state.user?.role !== 'admin') return '<h1>Admins only</h1>';
-  const tab = sessionStorage.getItem('atab') || 'parks';
-  const tabs = [...(state.cfg.hostBuilds ? ['builds'] : []), 'parks', 'licenses', 'moderation', 'users'];
+  const tab = sessionStorage.getItem('atab') || 'world';
+  const tabs = [...(state.cfg.hostBuilds ? ['builds'] : []), 'world', 'spots', 'parks', 'licenses', 'moderation', 'users'];
   return `<h1>Admin</h1><div class="tabs">${tabs.map((t) => `<button data-tab="${t}" class="${t === tab ? 'on' : ''}">${t}</button>`).join('')}</div><div id="tabbody">Loading…</div>`;
 };
 pages.admin.after = () => {
-  let tab = sessionStorage.getItem('atab') || 'parks';
-  if (tab === 'builds' && !state.cfg.hostBuilds) tab = 'parks';
+  let tab = sessionStorage.getItem('atab') || 'world';
+  if (tab === 'builds' && !state.cfg.hostBuilds) tab = 'world';
   document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { sessionStorage.setItem('atab', b.dataset.tab); route(); }));
   adminTabs[tab]($('#tabbody')).catch((e) => { $('#tabbody').textContent = e.message; });
 };
@@ -380,11 +398,61 @@ const adminTabs = {
     el.querySelectorAll('[data-pub]').forEach((b) => b.onclick = async () => { await post(`/admin/builds/${b.dataset.pub}/publish`, { published: b.dataset.on === '1' }); route(); });
     el.querySelectorAll('[data-bdel]').forEach((b) => b.onclick = async () => { if (confirm('Delete this build file?')) { await del(`/admin/builds/${b.dataset.bdel}`); route(); } });
   },
+  async world(el) {
+    const [{ regions }, w] = await Promise.all([get('/admin/regions'), get('/world')]);
+    const open = regions.filter((r) => r.status !== 'planned');
+    el.innerHTML = `<div class="card"><h3>Open world · revision ${esc(w.revision)}</h3>
+      <p class="small mute">Each state is one open-world level. When you ship a state build in your launcher, <b>Release</b> it here: its scanned parks flip to “in the game”, a news post goes up, the map turns the state rust-red, and the launcher/game see the change through <code>/api/world/manifest</code> (revision goes up). Your launcher pipeline can do this automatically with <code>POST /api/partner/regions/TX/release</code>.</p>
+      <form id="relform" class="row" style="max-width:none;align-items:end"><label>State<select name="code">${regions.map((r) => `<option value="${esc(r.code)}">${esc(r.name)} (${esc(r.status)})</option>`).join('')}</select></label>
+        <label>Game version<input name="version" placeholder="1.2.0" required style="width:120px"></label><label class="grow" style="min-width:200px">Notes (optional)<input name="notes" maxlength="300" placeholder="Austin, Dallas and 3 new parks"></label>
+        <button class="btn">Release state</button></form><div class="err" id="relerr"></div></div>
+      <div class="row" style="margin-top:18px"><h3 class="grow">States in progress</h3></div><div class="card tablewrap"><table><tr><th>State</th><th>Status</th><th>Version</th><th>Parks</th><th></th></tr>
+      ${open.map((r) => `<tr><td>${esc(r.name)}</td><td>${pill(r.status)}</td><td>${esc(r.releaseVersion ?? '—')}</td><td>${r.parks}</td><td><select data-st="${esc(r.code)}">${['planned', 'scanning', 'released'].map((x) => `<option ${x === r.status ? 'selected' : ''}>${x}</option>`).join('')}</select></td></tr>`).join('') || '<tr><td colspan="5" class="mute">Nothing yet — start by setting a state to “scanning”.</td></tr>'}</table></div>
+      <details class="card" style="margin-top:14px"><summary><b>Mark another state as scanning</b></summary><div class="row" style="margin-top:10px">${regions.filter((r) => r.status === 'planned').map((r) => `<button class="chip" data-scan="${esc(r.code)}">${esc(r.code)}</button>`).join('')}</div></details>
+      <div class="card" style="margin-top:14px"><h3>Post an announcement</h3><form id="newsform" style="max-width:none"><label>Headline<input name="title" maxlength="120" required></label><label>Details<textarea name="body" rows="2" maxlength="500"></textarea></label><button class="btn">Post</button></form></div>`;
+    $('#relform', el).onsubmit = async (e) => {
+      e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+      if (!confirm(`Release ${f.code} at v${f.version}? Players and launchers will see it immediately.`)) return;
+      const go = (force) => post(`/admin/regions/${f.code}/release`, { version: f.version, notes: f.notes, force });
+      try { const r = await go(false); toast(`Released — ${r.promoted} park(s) promoted to in-game`); route(); }
+      catch (x) {
+        if (x.data?.needsForce && confirm(`${x.message}\n\nRelease anyway?`)) { try { await go(true); toast('Released'); route(); } catch (y) { $('#relerr', el).textContent = y.message; } }
+        else $('#relerr', el).textContent = x.message;
+      }
+    };
+    el.querySelectorAll('[data-st]').forEach((s2) => s2.onchange = async () => { try { await post(`/admin/regions/${s2.dataset.st}`, { status: s2.value }); toast('Saved'); } catch (x) { toast(x.message); } });
+    el.querySelectorAll('[data-scan]').forEach((b) => b.onclick = async () => { await post(`/admin/regions/${b.dataset.scan}`, { status: 'scanning' }); route(); });
+    $('#newsform', el).onsubmit = async (e) => { e.preventDefault(); await post('/admin/news', Object.fromEntries(new FormData(e.target))); toast('Posted'); route(); };
+  },
+  async spots(el) {
+    const status = sessionStorage.getItem('spotfilter') || 'pending';
+    const { spots } = await get(`/admin/spots?status=${status}`);
+    el.innerHTML = `<div class="tabs">${['pending', 'approved', 'planned', 'converted', 'rejected'].map((x) => `<button data-sf="${x}" class="${x === status ? 'on' : ''}">${x}</button>`).join('')}</div>
+      ${spots.map((s) => `<div class="card" style="margin-bottom:12px"><div class="row"><h3 class="grow" style="margin:0">◆ ${esc(s.name)}</h3>${pill(s.status === 'approved' ? 'scanned' : s.status)}</div>
+        <p class="small mute">${esc(s.state ?? '?')} · ${s.lat.toFixed(4)}, ${s.lng.toFixed(4)} · by <b>${esc(s.submittedBy)}</b> · ${s.votes} vote${s.votes === 1 ? '' : 's'} · <a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${+s.lat}&mlon=${+s.lng}#map=18/${+s.lat}/${+s.lng}">open in maps ↗</a></p>
+        <div>${s.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>${s.description ? `<p>${esc(s.description)}</p>` : ''}
+        ${s.photos.length ? `<div class="thumbs">${s.photos.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener"><img src="${esc(p)}" alt="Photo submitted for ${esc(s.name)}"></a>`).join('')}</div><p class="small mute">Check photos for faces, plates and personal info before approving.</p>` : ''}
+        ${s.adminNote ? `<p class="small"><b>Note:</b> ${esc(s.adminNote)}</p>` : ''}
+        <div class="row" style="margin-top:8px">${s.status !== 'converted' ? `${s.status !== 'approved' ? `<button class="btn sm" data-sa="${s.id}" data-v="approved">Approve</button>` : ''}
+          ${s.status !== 'planned' ? `<button class="btn sm ghost" data-sa="${s.id}" data-v="planned">Plan a visit</button>` : ''}
+          ${s.status !== 'rejected' ? `<button class="btn sm danger" data-sa="${s.id}" data-v="rejected">Reject</button>` : ''}
+          <button class="btn sm ghost" data-promote="${s.id}" data-name="${esc(s.name)}" data-state="${esc(s.state ?? '')}">➜ Add to the tour</button>` : s.parkSlug ? `<a class="btn sm" href="#/parks/${esc(s.parkSlug)}">View park</a>` : ''}</div></div>`).join('') || `<p class="mute">No ${esc(status)} spots.</p>`}`;
+    el.querySelectorAll('[data-sf]').forEach((b) => b.onclick = () => { sessionStorage.setItem('spotfilter', b.dataset.sf); route(); });
+    el.querySelectorAll('[data-sa]').forEach((b) => b.onclick = async () => {
+      const note = b.dataset.v === 'rejected' ? (prompt('Reason (shown only to admins):') ?? '') : null;
+      try { await post(`/admin/spots/${b.dataset.sa}`, { status: b.dataset.v, note }); route(); } catch (x) { toast(x.message); }
+    });
+    el.querySelectorAll('[data-promote]').forEach((b) => b.onclick = async () => {
+      const city = prompt(`City for “${b.dataset.name}”${b.dataset.state ? ` (${b.dataset.state})` : ''}:`); if (!city) return;
+      const visitDate = prompt('Planned visit date (YYYY-MM-DD, or leave blank):') || '';
+      try { const r = await post(`/admin/spots/${b.dataset.promote}/promote`, { city, visitDate }); toast('Added to the tour'); location.hash = `#/parks/${r.slug}`; } catch (x) { toast(x.message); }
+    });
+  },
   async parks(el) {
     const { parks } = await get('/parks');
     el.innerHTML = `<div class="card"><h3>Add a park</h3><form id="pf" style="max-width:none"><div class="grid">
-      <label>Name<input name="name" required></label><label>City<input name="city" required></label><label>State<input name="state" required></label>
-      <label>Latitude<input name="lat" type="number" step="any"></label><label>Longitude<input name="lng" type="number" step="any"></label>
+      <label>Name<input name="name" required></label><label>City<input name="city" required></label><label>State (2 letters)<input name="state" required maxlength="2" placeholder="TX" style="text-transform:uppercase"></label>
+      <label>Latitude (puts it on the map)<input name="lat" type="number" step="any"></label><label>Longitude<input name="lng" type="number" step="any"></label>
       <label>Visit date<input name="visitDate" type="date"></label>
       <label>Status<select name="status"><option value="planned">planned</option><option value="scheduled">scheduled</option><option value="scanned">scanned</option><option value="in_game">in_game</option></select></label></div>
       <label>Description<textarea name="description" rows="2"></textarea></label><div class="err" id="err"></div><button class="btn">Add park</button></form></div>
@@ -452,7 +520,7 @@ window.addEventListener('hashchange', route);
 
 (async () => {
   try { state.cfg = await get('/config'); } catch {}
-  $('#brand').textContent = state.cfg.studioName;
+  $('#brand').textContent = state.cfg.gameName;
   document.title = `${state.cfg.gameName} · ${state.cfg.studioName}`;
   $('#foot').textContent = `© ${new Date().getFullYear()} ${state.cfg.studioName}`;
   await refreshUser();

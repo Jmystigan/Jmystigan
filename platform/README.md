@@ -5,7 +5,7 @@ The crew app for the skateboarding game. **Customers only** sign up (with a code
 **Your launcher stays in charge of the game** (scans, builds, updates). This app only needs to know who bought it — see *Connecting your launcher* below. (Optional built-in build hosting + a reference launcher exist behind `HOST_BUILDS=1`; ignore them if you don't need them.)
 
 ```
-server/    Express API + SQLite (node:sqlite, no native deps)
+server/    Express API + SQLite (node:sqlite, no native deps); world.js = regions/releases, geo.js = map projection
 web/       Website + player portal + admin panel (no build step; PWA)
 launcher/  OPTIONAL reference launcher (core.js tested, Electron shell untested) — only if you want to host builds here
 unreal/    C++ subsystem that uploads stats and checks in to parks (untested)
@@ -18,7 +18,8 @@ docs/      ARCHITECTURE.md, SCANNING.md, ROADMAP.md
 npm install
 ADMIN_USERNAME=yourname npm start     # http://localhost:3000
 npm run seed                          # optional demo parks
-npm test                              # API integration tests
+npm test                              # API integration tests (22)
+npm run build-map                     # regenerate web/us-states.json (needs dev deps)
 node launcher/test.mjs http://localhost:3000 <user> <pass>   # launcher core vs live server
 ```
 
@@ -40,6 +41,34 @@ Admin panel: `#/admin` → **builds** (drag & drop, publish/rollback), **parks**
 | `HOST_BUILDS` | off | `1` enables optional build hosting/launcher endpoints + admin "builds" tab |
 | `MAX_UPLOAD_GB` | 8 | Only with `HOST_BUILDS=1` |
 | `REGISTER_PER_HOUR` | 10 | Signups per IP per hour |
+
+## The open world: states, releases, and keeping the launcher in step
+
+The game is released **state by state**; each state is one open-world level. The site tracks this with *regions* (the 50 states + DC):
+`planned → scanning → released`. A **world revision** number goes up every time something changes (a state is released, a park is added or changes status, a spot is promoted).
+
+**When you ship a new state** (your launcher/build pipeline does this, or use Admin → world → *Release state*):
+```bash
+curl -X POST $PUBLIC_URL/api/partner/regions/TX/release -H "Authorization: Bearer $LAUNCHER_API_KEY" \
+     -H 'content-type: application/json' -d '{"version":"1.2.0","notes":"Austin, Dallas and Houston"}'
+```
+That marks Texas released at v1.2.0, flips its *scanned* parks to **in the game**, posts a news item ("Texas is now open!"), turns the state rust-red on the map, and bumps the revision. (If no park in the state is scanned yet, it asks for `"force":true`.)
+
+**Your launcher / game learns about it** by polling a cheap public endpoint (no personal data):
+```
+GET /api/world/manifest?since=<last revision you saw>
+-> {"revision":12,"changed":false}                                   # nothing new
+-> {"revision":13,"changed":true,"regions":[{"code":"TX","name":"Texas","version":"1.2.0","releasedAt":"…"}],"parks":[{"slug":"rail-yard-austin","name":"Rail Yard","state":"TX","lat":30.27,"lng":-97.74}]}
+```
+When a state appears that the player hasn't installed (or its `version` is newer than theirs), the launcher prompts the update. `launcher/core.js` has `world(sinceRevision)` for this. Park `slug`s are the same ones the game passes to `CheckInToPark` / `UploadStats`. The website's map also polls this and updates itself live.
+
+## The map, social, and "found a spot"
+
+- **`#/map`** — interactive US map (drag / wheel / pinch to zoom, tap a state or pin). States are coloured by release status; ★ = park in the game, ● = coming, ◆ = community spot. Selecting a park shows its leaderboard, riders (public profiles only — private riders show as "+N private"), board posts with 🤙 *respect*, and a *Represent this park* button.
+- **Wanted-poster profiles** — every player page is a downloadable "WANTED" poster (level, reward = best score, tricks they're "wanted for", last-seen park). Private players' posters are only visible to them (stamped PRIVATE).
+- **Found a new spot?** Riders drop a pin (tap the map, use GPS, or paste coordinates). 13+ add a name, notes and up to 3 photos; **under-13s can only pin + pick tags**. Photos are re-written without EXIF/GPS, only JPG/PNG are accepted, and nothing is public until an admin approves it (Admin → spots). Approved spots get votes (🤙) so you can see demand; *Add to the tour* turns one into a park (planned/scheduled) and credits the finder (as "a rider" if their profile is private). Deleting an account deletes its spots and photo files.
+- **Crew feed** (`#/feed`) — news, your park's board, and new spots near you.
+- Map data is generated from `us-atlas` by `npm run build-map` (committed; production needs no dev deps). Pins use the same Albers projection, so lat/lng from the admin form or GPS land on the right state.
 
 ## Connecting your launcher (customers only)
 

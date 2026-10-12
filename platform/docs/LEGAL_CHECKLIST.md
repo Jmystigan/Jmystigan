@@ -22,6 +22,12 @@
 - Don't ship scans containing identifiable people (faces, plates); capture when empty or blur.
 - Trademark: don't use real brand logos (park sponsors, shoe/board brands) without permission.
 
+## User-submitted spots and photos
+- **Photos are user content.** Require adults/13+ only (already enforced), review before publishing (already enforced), and have Terms that say you may use submitted spot info/photos to build the game (a licence grant) — and that the uploader owns/has the right to share them.
+- **Faces, plates, private property.** Admin review should reject photos with identifiable people and spots on private/unsafe land; the developer should confirm access before scanning.
+- **Location data.** Photo EXIF/GPS is stripped. A spot's coordinates are public once approved; the finder's name is hidden if their profile is private.
+- **Takedowns.** Keep a way to remove a spot/photo on request (Admin → spots) and consider a DMCA agent registration if you host user content in the US.
+
 ## Before launch
 - **Trademark search** the game title (USPTO + app stores + domains + handles). See `NAMES.md`.
 - Age ratings: **IARC** (free, used by Google Play and others) and ESRB for consoles/Steam as needed; disclose online interaction honestly.

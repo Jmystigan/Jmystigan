@@ -14,6 +14,17 @@
 - One represented park per player (switching replaces). In-game check-in is presence only.
 - Build hosting/launcher are optional (`HOST_BUILDS=1`); your own launcher is the default assumption.
 
+## Done in the latest round
+- Western restyle (parchment/rust/gold, concept art hero), wanted-poster profiles with PNG export, interactive US map, open-world regions + release flow + world manifest, rider-submitted spots with photos and an admin review/promote flow, 🤙 reactions, crew feed. 22 API tests + a browser run (phone and desktop).
+- Launcher core `world()`; admin can release a state in one click, or your build pipeline can via the partner endpoint.
+
+## Not done / untested for this round
+- **The game itself** (Unreal) doesn't read the world manifest yet: the sample subsystem only uploads stats/check-ins. Next step there is a `FetchWorldManifest()` that decides which state levels to stream.
+- Map is **US-only** (50 states + DC). International would need another basemap.
+- Pins are drawn client-side without clustering; fine for tens of parks, add clustering at hundreds.
+- No push/email notification when a state ships (it appears on the site, map, news and feed).
+- Photo moderation is manual (admin review). Add automated screening before opening spot uploads widely.
+
 ## Title
 - Working title is now **Blacktop Outlaws** (`GAME_NAME`). Concept art in `docs/concept-art/`. Stripe product + emails use `GAME_NAME`, so create the Stripe product with this name.
 

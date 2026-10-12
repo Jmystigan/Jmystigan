@@ -69,6 +69,16 @@ test('world: regions seeded, parks get map coordinates, state codes validated', 
   assert.ok((await call('GET', '/world')).body.revision > 1); // park creation bumped it
 });
 
+test('geo helpers for the map UI', async () => {
+  const p = (await call('GET', '/geo/project?lat=30.27&lng=-97.74')).body;
+  assert.equal(p.state, 'TX');
+  const u = (await call('GET', `/geo/unproject?x=${p.x}&y=${p.y}`)).body;
+  assert.ok(Math.abs(u.lat - 30.27) < 0.2 && Math.abs(u.lng + 97.74) < 0.2); assert.equal(u.state, 'TX');
+  assert.equal((await call('GET', '/geo/project?lat=51.5&lng=-0.12')).status, 400);
+  assert.equal((await call('GET', '/geo/unproject?x=3&y=3')).status, 400);
+  assert.equal((await call('GET', '/geo/project?lat=abc&lng=1')).status, 400);
+});
+
 test('open world: releasing a state promotes its parks, posts news, and the launcher manifest reflects it', async () => {
   const before = (await call('GET', '/world/manifest')).body;
   assert.deepEqual(before.regions, []); assert.deepEqual(before.parks, []);
@@ -81,13 +91,19 @@ test('open world: releasing a state promotes its parks, posts news, and the laun
 
   const m = (await call('GET', `/world/manifest?since=${before.revision}`)).body;
   assert.equal(m.changed, true);
-  assert.deepEqual(m.regions.map((x) => [x.code, x.version]), [['TX', '1.0.0']]);
+  assert.deepEqual(m.regions.map((x) => [x.code, x.version]), [['TX', '1.0.0']]);   // (WY is released later in this test)
   assert.deepEqual(m.parks.map((p) => p.name).sort(), ['Bowl Town', 'Rail Yard']);
   assert.deepEqual((await call('GET', `/world/manifest?since=${m.revision}`)).body, { revision: m.revision, changed: false });
 
   const w = (await call('GET', '/world')).body;
   assert.equal(w.regions.find((x) => x.code === 'TX').status, 'released');
   assert.match(w.news[0].title, /Texas is now open/); assert.match(w.news[0].body, /2 skateparks/);
+
+  // releasing a state with nothing scanned needs an explicit force
+  const empty = await rel('partner-secret', 'WY', { version: '0.0.1' });
+  assert.equal(empty.status, 409); assert.equal((await empty.json()).needsForce, true);
+  assert.equal((await rel('partner-secret', 'WY', { version: '0.0.1', force: true })).status, 200);
+  assert.equal((await call('POST', '/admin/regions/MT/release', { version: '0.0.1' }, admin.token)).body.needsForce, true);
 
   // admin route works too; non-admins can't; scanning status posts news
   assert.equal((await call('POST', '/admin/regions/OK/release', { version: '0.1.0' }, teen.token)).status, 403);

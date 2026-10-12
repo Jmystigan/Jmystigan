@@ -159,11 +159,11 @@ router.get('/admin/regions', (_req, res) => {
 });
 router.post('/admin/regions/:code/release', (req, res) => {
   try { res.json({ ok: true, ...releaseRegion(req.params.code.toUpperCase(), req.body ?? {}) }); }
-  catch (e) { res.status(e.status ?? 500).json({ error: e.message }); }
+  catch (e) { res.status(e.status ?? 500).json({ error: e.message, needsForce: !!e.needsForce }); }
 });
 router.post('/admin/regions/:code', (req, res) => {
   try { res.json({ ok: true, revision: setRegionStatus(req.params.code.toUpperCase(), req.body?.status, req.body?.notes) }); }
-  catch (e) { res.status(e.status ?? 500).json({ error: e.message }); }
+  catch (e) { res.status(e.status ?? 500).json({ error: e.message, needsForce: !!e.needsForce }); }
 });
 router.post('/admin/news', (req, res) => {
   const title = String(req.body?.title ?? '').trim().slice(0, 120);

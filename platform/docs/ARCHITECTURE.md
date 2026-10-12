@@ -11,7 +11,11 @@
 | Tour | `GET/POST /requests` `POST/DELETE /requests/:id/vote` |
 | Partner (your launcher backend) | `POST /partner/codes` (Bearer `LAUNCHER_API_KEY`) — mint/lookup a one-time signup code per customer |
 | Launcher (only with `HOST_BUILDS=1`) | `GET /config` `GET /launcher/manifest?kind=game\|launcher&channel=&platform=` `GET /launcher/download/:id` (Range-capable) `POST /launcher/game-token` `POST /licenses/redeem` `GET /library` |
-| Admin | `/admin/builds` (upload/list/publish/delete) `/admin/parks` `/admin/licenses` `/admin/reports` `/admin/posts/:id/moderate` `/admin/users` |
+| World | `GET /world` (map payload) `GET /world/manifest?since=N` (launcher/game poll) `GET /news` `GET /feed` · partner: `POST /partner/regions/:code/release` |
+| Spots | `GET /spots` `POST /spots` (multipart: lat,lng *or* x,y; tags; 13+: name, description, ≤3 photos) `GET /spots/:id/photos/:pid` `POST/DELETE /spots/:id/vote` `DELETE /spots/:id` |
+| Geo | `GET /geo/project?lat&lng` `GET /geo/unproject?x&y` (map ⇄ coordinates; US land only) |
+| Social | `POST/DELETE /posts/:id/respect` |
+| Admin | `/admin/builds` (upload/list/publish/delete) `/admin/parks` `/admin/licenses` `/admin/reports` `/admin/posts/:id/moderate` `/admin/users` `/admin/regions` (+ `/release`) `/admin/spots` (+ `/promote`) `/admin/news` |
 
 ### Token scopes
 `web` (30d, full) vs `game` (12h, stats/check-in only — rejected by admin, account-deletion and token-minting routes). A leaked game token from a command line can't hurt an account.
@@ -33,3 +37,10 @@ Stats are client-reported. Server caps and monotonic bests stop casual tampering
 - **Big builds:** a multi-GB game through the Node server works but is slow/expensive. Move build storage to Cloudflare R2 / S3 and have `/admin/builds` return a presigned upload URL and `/launcher/download` redirect to a signed download URL. The manifest contract (`version`, `sha256`, `size`, `downloadUrl`) doesn't change, so launchers don't care.
 - **Rate limiting** is in-memory per instance; use Redis if you scale out. **Email:** see above.
 - **Store builds vs own launcher:** if you also ship on Steam/Epic, they handle their own updating; this launcher + license keys is for direct distribution. Keep ownership in `licenses` (sync from store APIs if you want both).
+
+## Open world & map internals
+- `regions` (one row per state) + `meta.world_revision`. `releaseRegion()` is the single code path for Admin and the partner endpoint; it runs in a transaction.
+- Anything the map/launcher cares about calls `bumpRevision()`; the manifest is cacheable for 30 s.
+- `geo.js`: `project()` (d3 Albers-USA, same parameters as us-atlas), `stateAt()` (point-in-polygon against the state outlines with ~4 px coastal slack — the projection alone only checks a rectangle, so Canada/ocean would pass), `unproject()`.
+- Spots: photos are sanitised by `images.js` (JPEG: drop APP1/EXIF/XMP/IPTC/comments; PNG: keep only render-critical chunks) and stored under `DATA_DIR/uploads` with random names; served only if the spot is public or you own it / are admin. `users.js:deleteUsers()` removes files when an account is deleted (parent delete, self delete, retention jobs).
+- Under-13: can submit pin + tags only (no text, no photos), can vote and 🤙; their attribution is hidden when private.

@@ -20,10 +20,12 @@ export const addNews = (kind, title, body = '', region = null) =>
  * The developer shipped a state build: mark it released at `version`, flip its 'scanned' parks to 'in_game',
  * post a news item, and bump the world revision so launchers/games/maps pick it up.
  */
-export function releaseRegion(code, { version, notes = '' }) {
+export function releaseRegion(code, { version, notes = '', force = false }) {
   const r = db.prepare('SELECT * FROM regions WHERE code = ?').get(code);
   if (!r) throw Object.assign(new Error('Unknown state'), { status: 404 });
   if (!/^[\w.\-+]{1,32}$/.test(version ?? '')) throw Object.assign(new Error('A version like 1.2.0 is required'), { status: 400 });
+  const ready = db.prepare("SELECT COUNT(*) c FROM parks WHERE state = ? AND status IN ('scanned','in_game')").get(code).c;
+  if (!ready && !force) throw Object.assign(new Error(`No parks in ${r.name} are scanned or in the game yet. Mark them 'scanned' first, or release anyway with force.`), { status: 409, needsForce: true });
   return tx(() => {
     db.prepare("UPDATE regions SET status = 'released', release_version = ?, released_at = datetime('now'), notes = ? WHERE code = ?").run(version, String(notes).slice(0, 500), code);
     const promoted = db.prepare("UPDATE parks SET status = 'in_game' WHERE state = ? AND status = 'scanned'").run(code).changes;
