@@ -3,7 +3,8 @@
 ## API (all JSON under `/api`)
 | Area | Endpoints |
 |---|---|
-| Auth | `POST /auth/register` `POST /auth/login` `GET /me` `DELETE /me` · `GET/POST /consent/:token` (parent approval) |
+| Auth | `POST /auth/register` `POST /auth/login` `GET /me` `DELETE /me` `POST /auth/resend-consent` · `GET/POST /parent/:token` (parent review/approve/delete) |
+| Billing | `POST /checkout` `GET /checkout/session/:id` `POST /stripe/webhook` (raw body, signature-verified) |
 | Game | `PUT /game/stats` `POST /game/checkin` (game token or web token) |
 | Players | `GET /players/:name` `GET /players/search?q=` `POST/DELETE /players/:name/follow` `GET /me/profile` |
 | Parks | `GET /parks` `GET /parks/:slug` `POST/DELETE /parks/:slug/join` `POST /parks/:slug/posts` `POST /posts/:id/report` |
@@ -17,7 +18,7 @@
 
 ## Kid safety model (built in, not bolted on)
 - Nickname-only accounts; birth **year** only.
-- Under 13: parent email required → account locked from social + invisible to others until parent approves via emailed link. **Email sending is not wired up yet** — the link is logged to the server console (`[consent]`). Wire SES/Postmark/Resend into `routes/auth.js`.
+- Under 13: parent email required → account locked from social + invisible to others until the parent approves via an emailed link (`server/email.js`; Resend, or console in dev). The same link opens a **parent page**: see everything stored, approve, or delete. Unapproved accounts are deleted after `PENDING_CONSENT_DAYS`; resend is rate-limited.
 - Under 13 can only post **preset phrases**. 13+ gets free text filtered for profanity, contact info, links and other platforms (`server/moderation.js` — extend the blocklist).
 - Report links; 3 reports auto-hide pending admin review. Delete-my-account removes all data.
 - **This is engineering, not legal advice.** Have a lawyer review COPPA/GDPR-K/state laws and write the real privacy policy & ToS before collecting data from children.

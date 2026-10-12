@@ -32,7 +32,7 @@ async function refreshUser() {
 function renderNav() {
   const u = state.user, h = location.hash || '#/';
   const l = (href, text) => `<a href="${href}" class="${h === href || (href !== '#/' && h.startsWith(href)) ? 'on' : ''}">${text}</a>`;
-  $('#nav').innerHTML = [l('#/parks', 'Parks'), l('#/tour', 'Tour'), (state.cfg.hostBuilds || state.cfg.launcherUrl) ? l('#/play', 'Get the game') : '',
+  $('#nav').innerHTML = [l('#/parks', 'Parks'), l('#/tour', 'Tour'), (state.cfg.hostBuilds || state.cfg.launcherUrl || state.cfg.canBuy) ? l('#/play', 'Get the game') : '',
     u ? l('#/me', esc(u.username)) : l('#/login', 'Log in'),
     u?.role === 'admin' ? l('#/admin', 'Admin') : '',
     u ? '<a href="#/logout">Log out</a>' : '<a class="btn sm" href="#/register">Sign up</a>'].join('');
@@ -51,7 +51,7 @@ pages.home = async () => {
     <h1>Represent your park.</h1>
     <p>The crew app for <b>${esc(state.cfg.gameName)}</b> players. Claim your local skatepark, see who else in your area rides it,
        and show off your level, tricks and best scores. Players-only — you sign up with the code that comes with the game from ${esc(state.cfg.studioName)}.</p>
-    <div class="row"><a class="btn" href="#/register">Sign up with your game code</a><a class="btn ghost" href="#/parks">Find my park</a><a class="btn ghost" href="#/tour">Request a park</a></div>
+    <div class="row">${state.cfg.canBuy ? '<a class="btn" href="#/play">Get the game</a><a class="btn ghost" href="#/register">I have a code</a>' : '<a class="btn" href="#/register">Sign up with your game code</a>'}<a class="btn ghost" href="#/parks">Find my park</a><a class="btn ghost" href="#/tour">Request a park</a></div>
   </section>
   <h2>How it works</h2>
   <ol class="steps">
@@ -187,15 +187,18 @@ function profileHtml(p, mine) {
 pages.me = async () => {
   if (!state.user) return redirect('#/login');
   const p = await get('/me/profile'), u = state.user;
-  return `${u.consentStatus === 'pending' ? '<div class="notice">We emailed your parent/guardian to approve your account. Social features (crews, messages, requests) unlock after they approve.</div>' : ''}
+  return `${u.consentStatus === 'pending' ? '<div class="notice">We emailed your parent/guardian to approve your account. Social features unlock after they approve. <button class="btn sm ghost" id="resend" style="margin-left:8px">Resend the email</button></div>' : ''}
     ${profileHtml(p, true)}
     <section class="card" style="margin-top:14px"><h3>Account</h3>
       <div class="row"><a class="btn ghost sm" href="#/play">Redeem a key / get the game</a><button class="btn danger sm" id="delacct">Delete my account &amp; data</button></div></section>`;
 };
-pages.me.after = () => $('#delacct')?.addEventListener('click', async () => {
-  if (!confirm('Delete your account and all your data? This cannot be undone.')) return;
-  await del('/me'); setSession(null); await refreshUser(); location.hash = '#/';
-});
+pages.me.after = () => {
+  $('#resend')?.addEventListener('click', async () => { try { await post('/auth/resend-consent'); toast('Sent! Ask your parent to check their inbox (and spam).'); } catch (x) { toast(x.message); } });
+  $('#delacct')?.addEventListener('click', async () => {
+    if (!confirm('Delete your account and all your data? This cannot be undone.')) return;
+    await del('/me'); setSession(null); await refreshUser(); location.hash = '#/';
+  });
+};
 pages.u = async ([name]) => profileHtml(await get(`/players/${encodeURIComponent(name)}`), false);
 pages.u.after = ([name]) => $('#follow')?.addEventListener('click', async (e) => {
   try { await (e.target.dataset.on === '1' ? del : post)(`/players/${encodeURIComponent(name)}/follow`); route(); } catch (x) { toast(x.message); }
@@ -213,7 +216,7 @@ pages.login.after = () => $('#f').addEventListener('submit', async (e) => {
 pages.register = () => `<h1>Create your account</h1>
   <p class="mute">Pick a nickname — please don't use your real name. We only ask for birth year so we can keep younger players safe.</p>
   <form id="f"><label>Game code<input name="signupCode" placeholder="XXXXXX-XXXXXX-XXXXXX" autocomplete="off" required></label>
-  <p class="mute small" style="margin:-6px 0 0">Comes with the game from the ${esc(state.cfg.studioName)} launcher. Players only.</p>
+  <p class="mute small" style="margin:-6px 0 0">Comes with the game from ${esc(state.cfg.studioName)}. Players only.${state.cfg.canBuy ? ' <a href="#/play">Don\'t have it yet?</a>' : ''}</p>
   <label>Username<input name="username" autocomplete="username" pattern="[A-Za-z0-9_]{3,20}" required></label>
   <label>Password (8+ characters)<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
   <label>Birth year<input name="birthYear" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
@@ -234,41 +237,81 @@ pages.register.after = () => {
   });
 };
 
-pages.consent = async ([token]) => {
-  let child;
-  try { child = (await get(`/consent/${encodeURIComponent(token)}`)).child; } catch (x) { return `<h1>Parent approval</h1><p>${esc(x.message)}</p>`; }
-  return `<h1>Parent / guardian approval</h1><p><b>${esc(child)}</b> signed up for ${esc(state.cfg.gameName)}. Approving lets them use crews, quick messages and park requests.
-    Players under 13 can only send pre-written phrases, never free text, and we collect no real name, address or phone number.</p>
-    <p class="small mute">You can delete your child's account and data any time from their profile page.</p><button class="btn" id="ok">I'm their parent/guardian — approve</button>`;
+pages.parent = async ([token]) => {
+  let d;
+  try { d = await get(`/parent/${encodeURIComponent(token)}`); } catch (x) { return `<h1>Parent / guardian controls</h1><p>${esc(x.message)}</p>`; }
+  const s = d.stored;
+  return `<h1>Parent / guardian controls</h1>
+    <p><b>${esc(d.child)}</b> signed up for ${esc(state.cfg.gameName)}. Status: <span class="pill ${d.status === 'approved' ? 'in_game' : 'scheduled'}">${d.status === 'approved' ? 'Approved' : 'Waiting for your approval'}</span></p>
+    <div class="card"><h3>Everything we store about your child</h3>
+      <table><tr><td>Nickname</td><td>${esc(s.nickname)}</td></tr><tr><td>Birth year</td><td>${esc(s.birthYear)}</td></tr><tr><td>Your email</td><td>${esc(s.parentEmail)}</td></tr>
+      <tr><td>Level / best score</td><td>${esc(s.level)} / ${fmt(s.bestScore)}</td></tr><tr><td>Tricks known</td><td>${esc(s.tricksKnown)}</td></tr><tr><td>Skatepark they represent</td><td>${esc(s.representing ?? '—')}</td></tr></table>
+      <p class="small mute">No real name, address, phone number or photo. No ads. We never sell data. See <a href="#/safety">Safety &amp; privacy</a>.</p></div>
+    <div class="card" style="margin-top:14px"><h3>What approving allows</h3>
+      <ul><li>Representing one local skatepark and appearing on its leaderboard and rider list.</li><li>Sending <b>pre-written phrases</b> on that park's board (never free text). No private messages.</li></ul>
+      <div class="row">${d.status === 'approved' ? '' : '<button class="btn" id="approve">Approve</button>'}<button class="btn danger" id="del">Delete account &amp; all data</button></div>
+      <p class="small mute">You can come back to this page any time from the email link. Deleting is permanent.</p></div>`;
 };
-pages.consent.after = ([token]) => $('#ok')?.addEventListener('click', async () => { await post(`/consent/${encodeURIComponent(token)}`); app.innerHTML = '<h1>Approved ✅</h1><p>Thank you. Your child can now use social features.</p>'; });
+pages.parent.after = ([token]) => {
+  $('#approve')?.addEventListener('click', async () => { await post(`/parent/${encodeURIComponent(token)}`, { action: 'approve' }); toast('Approved'); route(); });
+  $('#del')?.addEventListener('click', async () => {
+    if (!confirm('Permanently delete this account and all its data?')) return;
+    await post(`/parent/${encodeURIComponent(token)}`, { action: 'delete' }); app.innerHTML = '<h1>Deleted</h1><p>The account and its data have been removed.</p>';
+  });
+};
 
+pages.thanks = async () => {
+  const id = new URLSearchParams(location.hash.split('?')[1] || '').get('session_id') || '';
+  const r = id ? await get(`/checkout/session/${encodeURIComponent(id)}`) : { paid: false };
+  if (!r.paid) {
+    if (id && !pages.thanks.tries--) return '<h1>Almost there</h1><p>We haven\'t seen your payment yet. If you were charged, your code will arrive by email shortly.</p>';
+    if (id) setTimeout(() => { if (location.hash.startsWith('#/thanks')) route(); }, 2500);
+    return `<h1>Thanks!</h1><p class="mute">Confirming your payment…</p>`;
+  }
+  return `<h1>You're in 🛹</h1><p>Thanks for buying ${esc(state.cfg.gameName)}! ${r.email ? `We also emailed your code to <b>${esc(r.email)}</b>.` : ''}</p>
+    <div class="card"><div class="mute small">Your game code</div><div class="mono" style="font-size:1.4rem;margin:6px 0">${esc(r.code)}</div>
+    ${r.used ? '<p class="mute">This code has already been used to create an account.</p>' : `<a class="btn" href="#/register?code=${encodeURIComponent(r.code)}">Create my crew account</a>`}</div>
+    <p class="small mute">Keep this code private — it works once. If a child will play, a parent/guardian will be asked to approve their account.</p>`;
+};
+pages.thanks.tries = 8;
+
+const buyBox = () => state.cfg.canBuy ? `<div class="card" style="margin:16px 0"><h3>Buy ${esc(state.cfg.gameName)}</h3>
+    <p class="mute small">Secure checkout by Stripe — we never see your card. You'll get a code by email and on the next page. (Under 18? Ask a parent or guardian to buy it.)</p>
+    <form id="buy" class="row" style="max-width:none"><label class="grow" style="min-width:220px">Email for your code<input type="email" name="email" required autocomplete="email"></label><button class="btn" style="align-self:end">Buy now</button></form><div class="err" id="err"></div></div>` : '';
 pages.play = async () => {
-  if (!state.cfg.hostBuilds) return `<h1>Get the game</h1><p class="mute">${esc(state.cfg.gameName)} is distributed through the ${esc(state.cfg.studioName)} launcher.</p>
+  if (!state.cfg.hostBuilds) return `<h1>Get the game</h1>${buyBox()}<p class="mute">${esc(state.cfg.gameName)} is distributed through the ${esc(state.cfg.studioName)} launcher.</p>
     ${state.cfg.launcherUrl ? `<p><a class="btn" href="${esc(state.cfg.launcherUrl)}" rel="noopener">Open the launcher page</a></p>` : ''}
     <p class="mute">After you get the game you'll receive a code to <a href="#/register">create your crew account</a>.</p>`;
+  // Optional built-in build hosting (HOST_BUILDS=1)
   const ua = navigator.userAgent, plat = /Android/.test(ua) ? 'android' : /iPhone|iPad/.test(ua) ? 'ios' : /Mac/.test(ua) ? 'mac' : /Linux/.test(ua) ? 'linux' : 'win64';
   const platforms = ['win64', 'mac', 'linux', 'android', 'ios'];
   const ms = await Promise.all(platforms.map((p) => get(`/launcher/manifest?kind=launcher&platform=${p}`).then((r) => [p, r.build])));
   const names = { win64: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', ios: 'iOS' };
   const lib = state.user ? await get('/library').catch(() => ({})) : {};
-  return `<h1>Play</h1><p class="mute">The ${esc(state.cfg.studioName)} launcher installs and updates ${esc(state.cfg.gameName)} for you — including every new park we scan.</p>
+  return `<h1>Play</h1>${buyBox()}<p class="mute">The ${esc(state.cfg.studioName)} launcher installs and updates ${esc(state.cfg.gameName)} for you — including every new park we scan.</p>
     <div class="grid">${ms.map(([p, b]) => `<div class="card"><h3>${names[p]}${p === plat ? ' <span class="pill">your device</span>' : ''}</h3>
       ${b ? `<p class="mute small">v${esc(b.version)} · ${bytes(b.size)}</p><a class="btn" href="${esc(b.downloadUrl)}">Download launcher</a>` : '<p class="mute small">Coming soon</p>'}</div>`).join('')}</div>
     <h2 style="margin-top:28px">Own the game?</h2>
     ${!state.user ? '<p><a href="#/login">Log in</a> to redeem your key and link the game to your profile.</p>'
       : lib.owned ? '<p>✅ This account owns the game. Open the launcher and log in with the same username.</p>'
-      : `<form id="redeem"><label>Game key<input name="key" placeholder="XXXXXX-XXXXXX-XXXXXX" required></label><div class="err" id="err"></div><button class="btn">Redeem</button></form>`}`;
+      : `<form id="redeem"><label>Game key<input name="key" placeholder="XXXXXX-XXXXXX-XXXXXX" required></label><div class="err" id="err2"></div><button class="btn">Redeem</button></form>`}`;
 };
-pages.play.after = () => $('#redeem')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  try { await post('/licenses/redeem', { key: new FormData(e.target).get('key') }); toast('Unlocked!'); route(); } catch (x) { $('#err').textContent = x.message; }
-});
+pages.play.after = () => {
+  $('#redeem')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await post('/licenses/redeem', { key: new FormData(e.target).get('key') }); toast('Unlocked!'); route(); } catch (x) { $('#err2').textContent = x.message; }
+  });
+  $('#buy')?.addEventListener('submit', async (e) => {
+    e.preventDefault(); const btn = e.target.querySelector('button'); btn.disabled = true;
+    try { const r = await post('/checkout', { email: new FormData(e.target).get('email') }); location.href = r.url; }
+    catch (x) { $('#err').textContent = x.message; btn.disabled = false; }
+  });
+};
 
 pages.safety = () => `<h1>Safety &amp; privacy</h1>
   <div class="card"><ul>
   <li><b>Nicknames only.</b> No real names, no addresses, no phone numbers — and the park board blocks messages that look like contact details.</li>
-  <li><b>Under 13?</b> A parent or guardian approves the account. Younger players send pre-written phrases only, never free text.</li>
+  <li><b>Under 13?</b> We email a parent or guardian, and the account stays locked and hidden until they approve. They can review everything we store and delete it any time from the link in that email. Unapproved accounts are deleted automatically after 14 days. Younger players send pre-written phrases only, never free text.</li>
   <li><b>Reporting.</b> Every board message has a report link. Reported messages are hidden quickly and reviewed by a human.</li>
   <li><b>Your data.</b> We store your username, birth year, game stats and (for under-13s) a parent email. You or a parent can delete the account and all data any time from the profile page.</li>
   <li><b>Players only.</b> Accounts need a code that comes with the game, so everyone here is a real player.</li><li><b>No ads, no selling data.</b></li></ul>
@@ -351,7 +394,11 @@ const adminTabs = {
     const { licenses } = await get('/admin/licenses');
     el.innerHTML = `<div class="card"><h3>Generate keys</h3><form id="lf" class="row" style="max-width:none"><label>How many<input name="count" type="number" min="1" max="500" value="1" style="width:100px"></label>
       <label>Note<input name="note" placeholder="e.g. Kickstarter backers"></label><button class="btn" style="align-self:end">Generate</button></form><pre id="keys" class="mono"></pre></div>
-      <h3 style="margin-top:20px">Keys</h3><div class="card tablewrap"><table><tr><th>Key</th><th>Note</th><th>Redeemed by</th></tr>${licenses.map((l) => `<tr><td class="mono">${esc(l.key)}</td><td>${esc(l.note)}</td><td>${esc(l.redeemedBy ?? '—')}</td></tr>`).join('')}</table></div>`;
+      <h3 style="margin-top:20px">Keys</h3><div class="card tablewrap"><table><tr><th>Key</th><th>Source</th><th>Buyer</th><th>Used by</th><th>Status</th><th></th></tr>${licenses.map((l) => `<tr><td class="mono">${esc(l.key)}</td><td>${esc(l.note)}</td><td>${esc(l.email ?? '—')}</td><td>${esc(l.redeemedBy ?? '—')}</td>
+      <td>${l.revokedAt ? `<span class="pill">revoked: ${esc(l.revokedReason ?? '')}</span>` : '<span class="pill in_game">active</span>'}</td>
+      <td>${l.revokedAt ? `<button class="btn sm ghost" data-re="${esc(l.key)}">Reinstate</button>` : `<button class="btn sm danger" data-rv="${esc(l.key)}">Revoke</button>`}</td></tr>`).join('')}</table></div>`;
+    el.querySelectorAll('[data-rv]').forEach((b) => b.onclick = async () => { if (confirm('Revoke this key and suspend the account that used it?')) { await post(`/admin/licenses/${b.dataset.rv}/revoke`, { reason: 'admin revoke' }); route(); } });
+    el.querySelectorAll('[data-re]').forEach((b) => b.onclick = async () => { await post(`/admin/licenses/${b.dataset.re}/reinstate`); route(); });
     $('#lf', el).onsubmit = async (e) => { e.preventDefault(); const f = new FormData(e.target); const r = await post('/admin/licenses', { count: +f.get('count'), note: f.get('note') }); $('#keys', el).textContent = r.keys.join('\n'); };
   },
   async moderation(el) {
@@ -364,7 +411,7 @@ const adminTabs = {
     el.innerHTML = `<label style="max-width:320px">Search username<input id="uq" placeholder="start typing…"></label><div id="ulist" class="card tablewrap" style="margin-top:12px"></div>`;
     const load = async () => {
       const { users } = await get(`/admin/users?q=${encodeURIComponent($('#uq', el).value)}`);
-      $('#ulist', el).innerHTML = `<table><tr><th>User</th><th>Role</th><th>Consent</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.username)}${u.banned ? ' <span class="pill">banned</span>' : ''}</td><td>${esc(u.role)}</td><td>${esc(u.consentStatus)}</td>
+      $('#ulist', el).innerHTML = `<table><tr><th>User</th><th>Role</th><th>Consent</th><th></th></tr>${users.map((u) => `<tr><td>${esc(u.username)}${u.banned === 2 ? ' <span class="pill">suspended (refund)</span>' : u.banned ? ' <span class="pill">banned</span>' : ''}</td><td>${esc(u.role)}</td><td>${esc(u.consentStatus)}</td>
         <td class="row"><button class="btn sm ghost" data-ban="${u.id}" data-v="${u.banned ? 0 : 1}">${u.banned ? 'Unban' : 'Ban'}</button>
         <button class="btn sm ghost" data-role="${u.id}" data-v="${u.role === 'admin' ? 'player' : 'admin'}">Make ${u.role === 'admin' ? 'player' : 'admin'}</button></td></tr>`).join('')}</table>`;
       el.querySelectorAll('[data-ban]').forEach((b) => b.onclick = async () => { await post(`/admin/users/${b.dataset.ban}`, { banned: b.dataset.v === '1' }); load(); });

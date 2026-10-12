@@ -63,11 +63,35 @@ test('under-13 needs parent email and is locked from social until approved', asy
   assert.equal(kid.user.social, false);
   // invisible to others while pending
   assert.equal((await call('GET', '/players/kidskater')).status, 404);
-  const { db } = await import('../server/db.js');
-  const tok = db.prepare('SELECT consent_token t FROM users WHERE username = ?').get('kidskater').t;
-  assert.equal((await call('POST', `/consent/${tok}`)).status, 200);
-  assert.equal((await call('POST', `/consent/${tok}`)).status, 404); // single use
+  // the parent got an email with the control link; nobody else did
+  const { outbox } = await import('../server/email.js');
+  const mail = outbox.find((m) => m.to === 'parent@example.com');
+  assert.ok(mail, 'parent email sent');
+  assert.match(mail.text, /kidskater/); assert.match(mail.text, /no real name/i);
+  const tok = mail.text.match(/#\/parent\/([a-f0-9]{48})/)[1];
+  assert.equal((await call('GET', '/parent/nope')).status, 404);
+  const view = (await call('GET', `/parent/${tok}`)).body;
+  assert.equal(view.status, 'pending'); assert.equal(view.stored.parentEmail, 'parent@example.com');
+  assert.equal((await call('POST', `/parent/${tok}`, { action: 'bogus' })).status, 400);
+  assert.equal((await call('POST', `/parent/${tok}`, { action: 'approve' })).status, 200);
   assert.equal((await call('GET', '/players/kidskater')).status, 200);
+  assert.equal((await call('POST', '/auth/resend-consent', null, kid.token)).status, 400); // nothing pending any more
+  // a second kid: parent deletes instead -> all data gone
+  const k2 = await reg('kidtwo', y, { parentEmail: 'p2@example.com' });
+  const t2 = outbox.find((m) => m.to === 'p2@example.com').text.match(/parent\/([a-f0-9]{48})/)[1];
+  assert.equal((await call('POST', '/auth/resend-consent', null, k2.body.token)).status, 200);
+  assert.equal(outbox.filter((m) => m.to === 'p2@example.com').length, 2); // resent
+  assert.equal((await call('POST', `/parent/${t2}`, { action: 'delete' })).body.deleted, true);
+  assert.equal((await call('GET', `/parent/${t2}`)).status, 404);
+  assert.equal((await call('POST', '/auth/login', { username: 'kidtwo', password: 'password123' })).status, 401);
+  // unapproved accounts are purged after the retention window
+  const { db } = await import('../server/db.js');
+  const k3 = await reg('kidthree', y, { parentEmail: 'p3@example.com' });
+  const { purgeUnapproved } = await import('../server/jobs.js');
+  assert.equal(purgeUnapproved(), 0); // fresh
+  db.prepare("UPDATE users SET created_at = datetime('now','-30 days') WHERE username = 'kidthree'").run();
+  assert.equal(purgeUnapproved(), 1);
+  assert.equal(db.prepare("SELECT 1 FROM users WHERE username='kidthree'").get(), undefined);
 });
 
 test('admin creates a park; non-admin cannot', async () => {

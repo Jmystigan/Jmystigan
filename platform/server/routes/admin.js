@@ -6,6 +6,7 @@ import path from 'node:path';
 import { db } from '../db.js';
 import { config } from '../config.js';
 import { requireAdmin } from '../auth.js';
+import { revokeLicense, reinstateLicense } from '../licenses.js';
 
 export const router = Router();
 router.use('/admin', requireAdmin);
@@ -97,8 +98,16 @@ router.post('/admin/licenses', (req, res) => {
   }
   res.status(201).json({ keys });
 });
+router.post('/admin/licenses/:key/revoke', (req, res) => {
+  const n = revokeLicense('key', String(req.params.key).toUpperCase(), String(req.body?.reason ?? 'admin revoke').slice(0, 100));
+  res.status(n ? 200 : 404).json(n ? { ok: true } : { error: 'No active license with that key' });
+});
+router.post('/admin/licenses/:key/reinstate', (req, res) => {
+  const n = reinstateLicense('key', String(req.params.key).toUpperCase());
+  res.status(n ? 200 : 404).json(n ? { ok: true } : { error: 'That license is not revoked' });
+});
 router.get('/admin/licenses', (_req, res) => {
-  res.json({ licenses: db.prepare(`SELECT l.key, l.note, l.created_at AS createdAt, l.redeemed_at AS redeemedAt, u.username AS redeemedBy
+  res.json({ licenses: db.prepare(`SELECT l.key, l.note, l.email, l.revoked_at AS revokedAt, l.revoked_reason AS revokedReason, l.created_at AS createdAt, l.redeemed_at AS redeemedAt, u.username AS redeemedBy
     FROM licenses l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.created_at DESC LIMIT 500`).all() });
 });
 
@@ -124,6 +133,9 @@ router.post('/admin/users/:id', (req, res) => {
   const { banned, role } = req.body ?? {};
   const id = Number(req.params.id);
   if (id === req.user.id) return res.status(400).json({ error: "You can't change your own account here" });
+  if (banned === false) { // un-ban also lifts a refund suspension and restores their license
+    for (const l of db.prepare('SELECT key FROM licenses WHERE user_id = ?').all(id)) reinstateLicense('key', l.key);
+  }
   if (banned !== undefined) db.prepare('UPDATE users SET banned = ? WHERE id = ?').run(banned ? 1 : 0, id);
   if (role === 'admin' || role === 'player') db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
   res.json({ ok: true });

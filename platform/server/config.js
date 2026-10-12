@@ -32,6 +32,17 @@ export const config = {
   // Stat sanity caps (server-side anti-cheat floor; tune to your game's real ceilings).
   caps: { level: 100, score: 50_000_000, combo: 1_000_000, playSeconds: 60 * 60 * 24 * 365, tricks: 500 },
   presenceMinutes: 10,
+  // Email (Resend HTTP API). Unset => emails are printed to the console and kept in an in-memory outbox (dev).
+  resendKey: process.env.RESEND_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || '',            // e.g. "JMystigan Game Studios <noreply@yourdomain.com>" (domain must be verified)
+  supportEmail: process.env.SUPPORT_EMAIL || '',       // shown in parent emails
+  refundRetentionDays: Number(process.env.REFUND_RETENTION_DAYS || 90), // suspended (refunded) accounts are deleted after this
+  pendingConsentDays: Number(process.env.PENDING_CONSENT_DAYS || 14), // unapproved under-13 accounts are deleted after this
+  // Stripe (Checkout + webhooks). Card details never touch this server.
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+  stripePriceId: process.env.STRIPE_PRICE_ID || '',   // the Price you create in the Stripe dashboard for the game
+  stripeAutomaticTax: process.env.STRIPE_AUTOMATIC_TAX === '1',
   registerPerHour: Number(process.env.REGISTER_PER_HOUR || 10), // per IP
   // Your existing launcher stays the source of truth for the game. This app only needs to know who is a customer.
   // Your launcher backend calls POST /api/partner/codes with this key to mint a one-time signup code per customer.

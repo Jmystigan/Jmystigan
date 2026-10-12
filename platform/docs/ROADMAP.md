@@ -14,10 +14,16 @@
 - One represented park per player (switching replaces). In-game check-in is presence only.
 - Build hosting/launcher are optional (`HOST_BUILDS=1`); your own launcher is the default assumption.
 
+## Done this round
+- Parent consent by email (Resend, dev console fallback), parent review/approve/delete page, resend, auto-purge of unapproved accounts.
+- Stripe Checkout + signed webhooks: auto-issued codes (idempotent), emailed; full refund / dispute → access ends & account suspended; dispute won → reinstated; suspended accounts auto-deleted after 90 days.
+- 15 integration tests (Stripe signatures are real; only the outbound Checkout call is stubbed).
+
+## Not verified against live services
+- Never run against **real Stripe or Resend** (no credentials/network here). Do a full test-mode purchase, refund, and email send before launch.
+
 ## Not built yet (highest value first)
-0. **Revoking access** when a purchase is refunded (partner endpoint to disable a customer's code/account) — today you'd ban the user from Admin → users.
-1. **Email delivery** for parent consent (link currently logged to console).
-2. **Real privacy policy / ToS** + lawyer review for children's data.
+1. **Lawyer-reviewed privacy policy / ToS / consent method** — see docs/LEGAL_CHECKLIST.md (consider private profiles for under-13s).
 3. Launcher: unpack + launch flow, self-update application, code-signing (Windows SmartScreen/macOS notarisation).
 4. Object storage (R2/S3) for builds; CDN.
 5. Mobile: the web app is installable; a native companion app (or push notifications for "your crew is online") is a later step.

@@ -32,6 +32,9 @@ Admin panel: `#/admin` → **builds** (drag & drop, publish/rollback), **parks**
 | `GAME_NAME` | Skateboarding Kid | |
 | `PORT`, `PUBLIC_URL`, `DATA_DIR` | 3000, localhost, `./data` | |
 | `JWT_SECRET` | generated & saved in `DATA_DIR` | Set explicitly in production |
+| `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | | Sell the game with Stripe Checkout; webhooks issue codes and handle refunds → [docs/SETUP_STRIPE_EMAIL.md](docs/SETUP_STRIPE_EMAIL.md) |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `SUPPORT_EMAIL` | _(dev: console)_ | Parent-consent + purchase emails |
+| `PENDING_CONSENT_DAYS`, `REFUND_RETENTION_DAYS` | 14, 90 | Auto-delete unapproved child accounts / refunded accounts |
 | `LAUNCHER_API_KEY` | _(empty = partner API off)_ | Shared secret your launcher backend uses to mint signup codes |
 | `LAUNCHER_URL` | | Where the "Get the game" page sends people |
 | `HOST_BUILDS` | off | `1` enables optional build hosting/launcher endpoints + admin "builds" tab |
@@ -51,6 +54,8 @@ Signup requires a one-time code. Three ways to get codes to customers:
    Show the `code`, or open `signupUrl` from the launcher, which pre-fills it. The call is idempotent per `externalId` (same customer → same code; `registered: true` once used).
 2. **Admin panel → licenses:** generate batches by hand (giveaways, early backers).
 3. **Bootstrap:** the account named in `ADMIN_USERNAME` signs up without a code.
+
+**Selling it:** with Stripe configured the site has a "Buy" button (hosted Checkout). A paid purchase emails the buyer a code automatically, and a **refund or lost dispute ends access** with no manual work. See [docs/SETUP_STRIPE_EMAIL.md](docs/SETUP_STRIPE_EMAIL.md). Before launch read [docs/LEGAL_CHECKLIST.md](docs/LEGAL_CHECKLIST.md); for naming see [docs/NAMES.md](docs/NAMES.md).
 
 Keep `LAUNCHER_API_KEY` on your server only — never inside the launcher binary.
 

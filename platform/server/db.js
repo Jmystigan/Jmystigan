@@ -115,6 +115,10 @@ CREATE TABLE IF NOT EXISTS licenses (
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   note TEXT NOT NULL DEFAULT '',
   external_id TEXT UNIQUE,                 -- customer id from your launcher/store, when issued via the partner API
+  email TEXT,                              -- purchaser email (Stripe), used to send the code
+  payment_intent TEXT,                     -- Stripe payment, so a refund/dispute can find its license
+  revoked_at TEXT,                         -- set on refund/dispute/manual revoke; access ends
+  revoked_reason TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   redeemed_at TEXT
 );
@@ -129,7 +133,10 @@ CREATE INDEX IF NOT EXISTS idx_posts_park ON posts(park_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_park ON park_scores(park_id, best_score DESC);
 `);
 
-try { db.exec('ALTER TABLE licenses ADD COLUMN external_id TEXT'); } catch { /* already exists */ }
+for (const col of ['external_id TEXT', 'email TEXT', 'payment_intent TEXT', 'revoked_at TEXT', 'revoked_reason TEXT']) {
+  try { db.exec(`ALTER TABLE licenses ADD COLUMN ${col}`); } catch { /* already exists */ }
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_lic_pi ON licenses(payment_intent)');
 
 export function tx(fn) {
   db.exec('BEGIN');
